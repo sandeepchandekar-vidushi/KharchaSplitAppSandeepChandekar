@@ -121,7 +121,7 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
       loadActivities();
     } else {
       // If no user, still show skeleton briefly then show empty state
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (initialLoading) {
           setInitialLoading(false);
           Animated.timing(contentFadeAnim, {
@@ -131,6 +131,9 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
           }).start();
         }
       }, 1000);
+
+      // Cleanup timer on unmount
+      return () => clearTimeout(timer);
     }
   }, [user?.id, loadActivities, initialLoading, contentFadeAnim]);
 
@@ -413,10 +416,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
   // Show skeleton loader during initial loading
   if (initialLoading) {
     return (
-      <SafeAreaView style={styles(colors, scale).container}>
-        <StatusBar 
-          barStyle={colors.statusBarStyle} 
-          backgroundColor={colors.statusBarBackground} 
+      <SafeAreaView style={styles(colors, scale).container} edges={['top', 'left', 'right']}>
+        <StatusBar
+          barStyle={colors.statusBarStyle}
+          backgroundColor={colors.statusBarBackground}
         />
         <ActivityScreenSkeleton />
       </SafeAreaView>
@@ -424,10 +427,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
   }
 
   return (
-    <SafeAreaView style={styles(colors, scale).container}>
-      <StatusBar 
-        barStyle={colors.statusBarStyle} 
-        backgroundColor={colors.statusBarBackground} 
+    <SafeAreaView style={styles(colors, scale).container} edges={['top', 'left', 'right']}>
+      <StatusBar
+        barStyle={colors.statusBarStyle}
+        backgroundColor={colors.statusBarBackground}
       />
       
       <Animated.View style={[styles(colors, scale).animatedContainer, { opacity: contentFadeAnim }]}>
@@ -449,7 +452,7 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
             style={styles(colors, scale).scrollView}
             contentContainerStyle={[
               styles(colors, scale).scrollContent,
-              { paddingBottom: scale(64) + insets.bottom + scale(20) } // Dynamic safe area padding
+              { paddingBottom: insets.bottom } // Only safe area padding, no extra space
             ]}
             refreshControl={
               <RefreshControl
@@ -526,7 +529,7 @@ const styles = (colors: any, scale: (size: number) => number) =>
       flex: 1,
     },
     scrollContent: {
-      paddingVertical: scale(8),
+      paddingTop: scale(8), // Only top padding, no bottom padding
     },
     activityItem: {
       flexDirection: 'row',

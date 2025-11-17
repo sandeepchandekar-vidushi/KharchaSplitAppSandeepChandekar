@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   StatusBar,
+  Linking,
 } from 'react-native';
 import { authService } from '../services/authService';
 import { PhoneStorage } from '../services/phoneStorage';
@@ -60,13 +61,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     try {
       setLoadingLastNumber(true);
       const lastNumber = await PhoneStorage.getLastPhoneNumber();
-
+      
       if (lastNumber && lastNumber.length === 10) {
         setPhoneNumber(lastNumber);
       }
     } catch (error) {
-      console.error('LoginScreen: Failed to load last used phone number:', error);
-      // Continue silently - this is a convenience feature, not critical
     } finally {
       setLoadingLastNumber(false);
     }
@@ -76,6 +75,34 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     const cleaned = text.replace(/\D/g, '');
     if (cleaned.length <= 10) {
       setPhoneNumber(cleaned);
+    }
+  };
+
+  const openPrivacyPolicy = async () => {
+    const url = 'https://kharchasplit.com/privacy-policy';
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Cannot open the URL');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open Privacy Policy');
+    }
+  };
+
+  const openTermsConditions = async () => {
+    const url = 'https://kharchasplit.com/terms-conditions';
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Cannot open the URL');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open Terms & Conditions');
     }
   };
 
@@ -150,7 +177,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            By continuing, you agree to our Terms & Privacy Policy
+            By continuing, you agree to our{' '}
+            <Text style={styles.linkText} onPress={openTermsConditions}>
+              Terms
+            </Text>
+            {' '}and{' '}
+            <Text style={styles.linkText} onPress={openPrivacyPolicy}>
+              Privacy Policy.
+            </Text>
           </Text>
         </View>
       </View>
@@ -247,5 +281,9 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) => StyleShe
     fontSize: ms(12),
     color: colors.secondaryText,
     textAlign: 'center',
+  },
+  linkText: {
+    fontSize: ms(12),
+    color: colors.secondaryText,
   },
 });

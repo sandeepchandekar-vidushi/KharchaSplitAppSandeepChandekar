@@ -76,10 +76,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   const styles = createStyles(colors);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar 
-        barStyle={colors.statusBarStyle} 
-        backgroundColor={colors.statusBarBackground} 
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar
+        barStyle={colors.statusBarStyle}
+        backgroundColor={colors.statusBarBackground}
       />
       {/* Header */}
       <View style={styles.header}>
@@ -89,7 +89,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 64 + insets.bottom + 20 }} // Account for safe tab bar height
+        contentContainerStyle={{ paddingBottom: insets.bottom }} // Only safe area padding
       >
         {/* Profile Section */}
         <View style={styles.profileSection}>
@@ -99,7 +99,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                 <View style={styles.avatarPlaceholder}>
                   <ActivityIndicator size="small" color={colors.primaryButton} />
                 </View>
-              ) : (
+              ) : user?.profileImageBase64 ? (
                 <Image
                   source={{ uri: getProfileImageUri(user || {}) }}
                   style={styles.avatar}
@@ -109,6 +109,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                   onLoad={() => {
                   }}
                 />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback]}>
+                  <Text style={styles.avatarText}>
+                    {userProfile.firstName.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
               )}
             </View>
             <View style={styles.userInfo}>
@@ -219,6 +225,16 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
     profileInfo: { flexDirection: 'row', alignItems: 'center', flex: 1 },
     avatarContainer: { marginRight: 16 },
     avatar: { width: 60, height: 60, borderRadius: 30 },
+    avatarFallback: {
+      backgroundColor: colors.primaryButton,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    avatarText: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: colors.primaryButtonText,
+    },
     avatarPlaceholder: {
       width: 60,
       height: 60,

@@ -161,6 +161,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     return safeTabBarSpace;
   };
 
+  // Calculate floating button position for iOS and Android
+  const getFloatingButtonBottom = () => {
+    // For iOS, use a fixed lower position to match Android
+    const bottomSpace = insets.bottom || 0;
+    return bottomSpace + scale(16); // Very close to tab bar
+  };
+
   // Create an object of scaled font sizes using the imported typography file
   const scaledFontSize = {
     lg: scale(typography.fontSize.lg),
@@ -176,8 +183,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showSearchBar, setShowSearchBar] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showArchivedGroups, setShowArchivedGroups] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [groups, setGroups] = useState<Group[]>([]);
+  const [archivedGroups, setArchivedGroups] = useState<Group[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [overallBalance, setOverallBalance] = useState<OverallBalance>({
     netBalance: 0,
@@ -192,6 +202,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     totalExpenses: 0,
     expenseCount: 0,
   });
+  const [showPersonalExpenses, setShowPersonalExpenses] = useState(true);
 
   const loadGroupsFromFirebase = async () => {
     if (!user) {
@@ -271,8 +282,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             if (updatedGroups[index]) {
               updatedGroups[index] = {
                 ...updatedGroups[index],
-                youOwe: Math.max(0, -balance.netBalance),
-                youAreOwed: Math.max(0, balance.netBalance),
+                youOwe: parseFloat(Math.max(0, -balance.netBalance).toFixed(2)),
+                youAreOwed: parseFloat(Math.max(0, balance.netBalance).toFixed(2)),
                 details: balance.details,
                 moreBalances: balance.details.length > 3 ? balance.details.length - 3 : 0,
               };
@@ -323,10 +334,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
     const netBalance = totalYouAreOwed - totalYouOwe;
 
+    // Format to 2 decimal places to prevent multiple decimal issues
     setOverallBalance({
-      netBalance,
-      totalYouOwe,
-      totalYouAreOwed,
+      netBalance: parseFloat(netBalance.toFixed(2)),
+      totalYouOwe: parseFloat(totalYouOwe.toFixed(2)),
+      totalYouAreOwed: parseFloat(totalYouAreOwed.toFixed(2)),
       groupBalanceDetails
     });
   };
@@ -478,16 +490,38 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       )
   );
 
-  // Render right swipe action (delete button)
+  // Handle archive group
+  const handleArchiveGroup = async (group: Group) => {
+    try {
+      // Move group to archived list
+      setArchivedGroups(prev => [...prev, group]);
+      setGroups(prev => prev.filter(g => g.id !== group.id));
+      Alert.alert('Success', `${group.name} archived successfully`);
+    } catch (error) {
+      console.error('Error archiving group:', error);
+      Alert.alert('Error', 'Failed to archive group. Please try again.');
+    }
+  };
+
+  // Render right swipe actions (archive and delete buttons)
   const renderRightActions = (group: Group) => {
     return (
-      <TouchableOpacity
-        style={styles.deleteAction}
-        onPress={() => handleDeleteGroup(group.id, group.name)}
-      >
-        <Ionicons name="trash-outline" size={scale(24)} color="#FFFFFF" />
-        <Text style={styles.deleteActionText}>Delete</Text>
-      </TouchableOpacity>
+      <View style={styles.swipeActionsContainer}>
+        <TouchableOpacity
+          style={styles.archiveAction}
+          onPress={() => handleArchiveGroup(group)}
+        >
+          <Ionicons name="archive-outline" size={scale(24)} color="#FFFFFF" />
+          <Text style={styles.actionText}>Archive</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteAction}
+          onPress={() => handleDeleteGroup(group.id, group.name)}
+        >
+          <Ionicons name="trash-outline" size={scale(24)} color="#FFFFFF" />
+          <Text style={styles.actionText}>Delete</Text>
+        </TouchableOpacity>
+      </View>
     );
   };
 
@@ -508,7 +542,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   // Show skeleton loader during initial loading
   if (initialLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.statusBarBackground} />
         <HomeScreenSkeleton />
       </SafeAreaView>
@@ -517,7 +551,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
        {/* --- STATUS BAR FIX --- */}
        {/* Use dynamic status bar style from theme colors */}
        <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.statusBarBackground} />
@@ -531,21 +565,81 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           <TouchableOpacity style={styles.headerButton} onPress={handleSearch}>
             <MaterialIcons
               name={showSearchBar ? 'close' : 'search'}
-              // --- RESPONSIVE --- Correctly uses scaled size
               size={scaledFontSize.lg}
               color={colors.primaryText}
             />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerButton} onPress={handleAddGroup}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => setShowHeaderMenu(!showHeaderMenu)}
+          >
             <MaterialIcons
-              name="add"
-              // --- RESPONSIVE --- Correctly uses scaled size
+              name="more-vert"
               size={scaledFontSize.lg}
               color={colors.primaryText}
             />
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Header Dropdown Menu */}
+      {showHeaderMenu && (
+        <>
+          <TouchableOpacity
+            style={styles.headerMenuOverlay}
+            activeOpacity={1}
+            onPress={() => setShowHeaderMenu(false)}
+          />
+          <View style={styles.headerMenuContainer}>
+            <TouchableOpacity
+              style={styles.headerMenuItem}
+              onPress={() => {
+                setShowPersonalExpenses(!showPersonalExpenses);
+                setShowHeaderMenu(false);
+              }}
+            >
+              <MaterialIcons
+                name={showPersonalExpenses ? 'visibility-off' : 'visibility'}
+                size={scale(20)}
+                color={colors.primaryText}
+              />
+              <Text style={styles.headerMenuText}>
+                {showPersonalExpenses ? 'Hide' : 'Show'} Personal Expenses
+              </Text>
+            </TouchableOpacity>
+            <View style={styles.headerMenuDivider} />
+            <TouchableOpacity
+              style={styles.headerMenuItem}
+              onPress={() => {
+                setShowHeaderMenu(false);
+                setShowArchivedGroups(true);
+              }}
+            >
+              <MaterialIcons
+                name="archive"
+                size={scale(20)}
+                color={colors.primaryText}
+              />
+              <Text style={styles.headerMenuText}>Archived Groups</Text>
+            </TouchableOpacity>
+            <View style={styles.headerMenuDivider} />
+            <TouchableOpacity
+              style={styles.headerMenuItem}
+              onPress={() => {
+                setShowHeaderMenu(false);
+                handleAddGroup();
+              }}
+            >
+              <MaterialIcons
+                name="group-add"
+                size={scale(20)}
+                color={colors.primaryText}
+              />
+              <Text style={styles.headerMenuText}>Create Group</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
       {/* Search Bar */}
       {showSearchBar && (
@@ -586,41 +680,49 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <View style={styles.balanceRow}>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>Net Balance</Text>
-                <Text style={styles.balanceValue}>₹{overallBalance.netBalance}</Text>
+                <Text style={styles.balanceValue}>
+                  ₹{overallBalance.netBalance.toFixed(2)}
+                </Text>
               </View>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>You Owe</Text>
-                <Text style={styles.balanceValue}>₹{overallBalance.totalYouOwe}</Text>
+                <Text style={styles.balanceValue}>
+                  ₹{overallBalance.totalYouOwe.toFixed(2)}
+                </Text>
               </View>
               <View style={styles.balanceItem}>
                 <Text style={styles.balanceLabel}>You Are Owed</Text>
-                <Text style={styles.balanceValue}>₹{overallBalance.totalYouAreOwed}</Text>
+                <Text style={styles.balanceValue}>
+                  ₹{overallBalance.totalYouAreOwed.toFixed(2)}
+                </Text>
               </View>
             </View>
           )}
         </View>
 
         {/* Personal Expenses Card */}
-        <TouchableOpacity
-          style={styles.personalExpensesCard}
-          onPress={() => navigation.navigate('PersonalExpenses')}
-        >
-          <View style={styles.personalExpensesHeader}>
-            <View style={styles.personalExpensesIcon}>
-              <MaterialIcons name="receipt-long" size={scaledFontSize.lg} color={colors.primaryButtonText} />
+        {showPersonalExpenses && (
+          <TouchableOpacity
+            style={styles.personalExpensesCard}
+            onPress={() => navigation.navigate('PersonalExpenses')}
+          >
+            <View style={styles.personalExpensesHeader}>
+              <View style={styles.personalExpensesIcon}>
+                <MaterialIcons name="receipt-long" size={scaledFontSize.lg} color={colors.primaryButtonText} />
+              </View>
+              <View style={styles.personalExpensesInfo}>
+                <Text style={styles.personalExpensesTitle}>Personal Expenses</Text>
+                <Text style={styles.personalExpensesSubtitle}>
+                  {personalExpensesSummary.expenseCount} expense{personalExpensesSummary.expenseCount !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <View style={styles.personalExpensesAmount}>
+                <Text style={styles.personalExpensesValue}>₹{personalExpensesSummary.totalExpenses.toFixed(0)}</Text>
+                <MaterialIcons name="chevron-right" size={scaledFontSize.lg} color={colors.primaryText} />
+              </View>
             </View>
-            <View style={styles.personalExpensesInfo}>
-              <Text style={styles.personalExpensesTitle}>Personal Expenses</Text>
-              <Text style={styles.personalExpensesSubtitle}>
-                {personalExpensesSummary.expenseCount} expense{personalExpensesSummary.expenseCount !== 1 ? 's' : ''}
-              </Text>
-            </View>
-            <View style={styles.personalExpensesAmount}>
-              <Text style={styles.personalExpensesValue}>₹{personalExpensesSummary.totalExpenses.toFixed(0)}</Text>
-              <MaterialIcons name="chevron-right" size={scaledFontSize.lg} color={colors.primaryText} />
-            </View>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        )}
 
         {/* Groups List */}
         {groupsLoading ? (
@@ -668,7 +770,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                         <View key={idx} style={styles.detailRow}>
                           <Text style={styles.detailText}>{detail.text}</Text>
                           <Text style={styles.detailText}>
-                            {detail.type === 'owe' ? '-' : '+'}₹{detail.amount}
+                            {detail.type === 'owe' ? '-' : '+'}₹{detail.amount.toFixed(2)}
                           </Text>
                         </View>
                       ))
@@ -710,7 +812,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       <TouchableOpacity
         style={[
           styles.floatingButton,
-          { bottom: getContentBottomPadding() - scale(20) } // Dynamic positioning above safe tab bar area
+          { bottom: getFloatingButtonBottom() } // iOS & Android compatible positioning
         ]}
         onPress={handleAddGroup}
       >
@@ -725,6 +827,64 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         {/* Create New Group Modal */}
         <Modal visible={showCreateGroup} animationType="slide" presentationStyle="pageSheet">
           <CreateNewGroupScreen onClose={handleCloseCreateGroup} onSave={handleSaveNewGroup} />
+        </Modal>
+
+        {/* Archived Groups Modal */}
+        <Modal visible={showArchivedGroups} animationType="slide" presentationStyle="pageSheet">
+          <SafeAreaView style={styles.modalContainer} edges={['top', 'left', 'right']}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Archived Groups</Text>
+              <TouchableOpacity onPress={() => setShowArchivedGroups(false)}>
+                <MaterialIcons name="close" size={scale(28)} color={colors.primaryText} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Archived Groups List */}
+            <ScrollView style={styles.modalScrollView}>
+              {archivedGroups.length === 0 ? (
+                <View style={styles.emptyArchivedContainer}>
+                  <MaterialIcons name="archive" size={scale(80)} color={colors.secondaryText} />
+                  <Text style={styles.emptyArchivedText}>No Archived Groups</Text>
+                  <Text style={styles.emptyArchivedSubtext}>
+                    Groups you archive will appear here
+                  </Text>
+                </View>
+              ) : (
+                archivedGroups.map(group => (
+                  <View key={group.id} style={styles.archivedGroupCard}>
+                    <View style={styles.groupHeader}>
+                      <View style={styles.avatarContainer}>
+                        {group.coverImageUrl ? (
+                          <Image source={{ uri: ensureDataUri(group.coverImageUrl) || '' }} style={styles.avatarImage} />
+                        ) : (
+                          <Text style={styles.avatar}>{group.avatar}</Text>
+                        )}
+                      </View>
+                      <View style={styles.groupInfo}>
+                        <Text style={styles.groupName}>{group.name}</Text>
+                        {group.description && (
+                          <Text style={styles.groupDescription}>{group.description}</Text>
+                        )}
+                        <Text style={styles.membersCount}>{group.members?.length || 0} members</Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.unarchiveButton}
+                      onPress={() => {
+                        setGroups(prev => [...prev, group]);
+                        setArchivedGroups(prev => prev.filter(g => g.id !== group.id));
+                        Alert.alert('Success', `${group.name} restored successfully`);
+                      }}
+                    >
+                      <MaterialIcons name="unarchive" size={scale(20)} color={colors.primaryButton} />
+                      <Text style={styles.unarchiveButtonText}>Restore</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </SafeAreaView>
         </Modal>
       </Animated.View>
     </SafeAreaView>
@@ -761,6 +921,48 @@ const createStyles = (
     },
     headerActions: { flexDirection: 'row' },
     headerButton: { padding: scale(8), marginLeft: scale(12) },
+    headerMenuOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 999,
+    },
+    headerMenuContainer: {
+      position: 'absolute',
+      top: scale(60),
+      right: scale(16),
+      backgroundColor: colors.cardBackground,
+      borderRadius: scale(12),
+      paddingVertical: scale(8),
+      minWidth: scale(220),
+      shadowColor: colors.primaryText,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 8,
+      zIndex: 1000,
+    },
+    headerMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: scale(16),
+      paddingVertical: scale(12),
+      gap: scale(12),
+    },
+    headerMenuText: {
+      fontSize: fonts.body,
+      color: colors.primaryText,
+      fontWeight: '500',
+    },
+    headerMenuDivider: {
+      height: 1,
+      backgroundColor: colors.secondaryText,
+      opacity: 0.2,
+      marginHorizontal: scale(12),
+      marginVertical: scale(4),
+    },
     searchContainer: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -989,19 +1191,95 @@ const createStyles = (
       fontSize: fonts.subtitle,
       fontWeight: '700',
     },
+    swipeActionsContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginVertical: scale(8),
+    },
+    archiveAction: {
+      backgroundColor: '#F59E0B',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: scale(80),
+      height: '100%',
+      marginRight: scale(4),
+    },
     deleteAction: {
       backgroundColor: '#FF3B30',
       justifyContent: 'center',
       alignItems: 'center',
       width: scale(80),
-      marginVertical: scale(8),
-      borderRadius: scale(8),
+      height: '100%',
       marginRight: scale(16),
     },
-    deleteActionText: {
+    actionText: {
       color: '#FFFFFF',
       fontSize: fonts.caption,
       fontWeight: '600',
       marginTop: scale(4),
+    },
+    modalContainer: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: scale(20),
+      paddingVertical: scale(16),
+      backgroundColor: colors.cardBackground,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.secondaryText + '20',
+    },
+    modalTitle: {
+      fontSize: fonts.headerLarge,
+      fontWeight: '700',
+      color: colors.primaryText,
+    },
+    modalScrollView: {
+      flex: 1,
+      paddingHorizontal: scale(16),
+      paddingTop: scale(16),
+    },
+    emptyArchivedContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: scale(100),
+    },
+    emptyArchivedText: {
+      fontSize: fonts.title,
+      fontWeight: '600',
+      color: colors.primaryText,
+      marginTop: scale(16),
+    },
+    emptyArchivedSubtext: {
+      fontSize: fonts.body,
+      color: colors.secondaryText,
+      marginTop: scale(8),
+      textAlign: 'center',
+    },
+    archivedGroupCard: {
+      backgroundColor: colors.cardBackground,
+      marginBottom: scale(12),
+      padding: scale(16),
+      borderRadius: scale(12),
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    unarchiveButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.primaryButton + '20',
+      paddingHorizontal: scale(12),
+      paddingVertical: scale(8),
+      borderRadius: scale(8),
+      gap: scale(6),
+    },
+    unarchiveButtonText: {
+      fontSize: fonts.body,
+      fontWeight: '600',
+      color: colors.primaryButton,
     },
   });

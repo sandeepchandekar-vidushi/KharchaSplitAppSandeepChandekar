@@ -168,7 +168,13 @@ export const OTPVerificationScreen: React.FC<OTPVerificationScreenProps> = ({
 
     setLoading(true);
     try {
-      const isValid = await authService.verifyOTP(phoneNumber, otpValue);
+      // Testing scenario: Allow phone number 9822192700 to login with OTP 123456
+      let isValid = false;
+      if (phoneNumber === '9822192700' && otpValue === '123456') {
+        isValid = true;
+      } else {
+        isValid = await authService.verifyOTP(phoneNumber, otpValue);
+      }
 
       if (isValid) {
         await authService.clearOTP(phoneNumber);

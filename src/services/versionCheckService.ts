@@ -45,33 +45,30 @@ class VersionCheckService {
         return null;
       }
 
-      const versionData = versionDoc.data();
+      const versionData = versionDoc.data() as AppVersion;
 
-      // Validate that we have the required fields
+      // Validate version data
       if (!versionData ||
           typeof versionData.latestVersionCode !== 'number' ||
           typeof versionData.minimumVersionCode !== 'number') {
-        console.log('Version document missing required fields:', versionData);
+        console.log('Invalid version data in Firebase');
         return null;
       }
 
-      // Type assertion after validation
-      const appVersion = versionData as AppVersion;
-
       // Compare version codes
-      const updateAvailable = this.CURRENT_VERSION_CODE < appVersion.latestVersionCode;
-      const forceUpdate = this.CURRENT_VERSION_CODE < appVersion.minimumVersionCode;
+      const updateAvailable = this.CURRENT_VERSION_CODE < versionData.latestVersionCode;
+      const forceUpdate = this.CURRENT_VERSION_CODE < versionData.minimumVersionCode;
 
       const storeUrl = Platform.OS === 'android'
-        ? appVersion.playStoreUrl
-        : appVersion.appStoreUrl;
+        ? versionData.playStoreUrl
+        : versionData.appStoreUrl;
 
       return {
         updateAvailable,
         forceUpdate,
         currentVersion: this.CURRENT_VERSION_NAME,
-        latestVersion: appVersion.latestVersion,
-        updateMessage: appVersion.updateMessage || 'A new version is available!',
+        latestVersion: versionData.latestVersion,
+        updateMessage: versionData.updateMessage || 'A new version is available!',
         storeUrl,
       };
     } catch (error) {

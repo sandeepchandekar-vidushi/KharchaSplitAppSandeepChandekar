@@ -21,6 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { Share } from 'react-native';
 import { s, vs, ms } from '../utils/deviceDimensions';
 import { contactsCacheService } from '../services/contactsCacheService';
+import { formatPhoneForDisplay } from '../utils/phoneFormatter';
 
 interface Group {
   id: string;
@@ -61,6 +62,9 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
   const [hasMore, setHasMore] = useState(true);
   const CONTACTS_PER_PAGE = 50;
 
+  // Track if permission request is in progress to prevent multiple requests
+  const permissionRequestingRef = useRef(false);
+
   useEffect(() => {
     console.log('[AddMember] Screen mounted');
     console.log('[AddMember] Group prop:', JSON.stringify(group));
@@ -76,11 +80,22 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
     };
 
     initAndClearCache();
-    requestContactsPermission();
+
+    // Only request permission if not already requesting
+    if (!permissionRequestingRef.current) {
+      requestContactsPermission();
+    }
   }, []);
 
   const requestContactsPermission = async () => {
+    // Prevent multiple simultaneous requests
+    if (permissionRequestingRef.current) {
+      console.log('[AddMember] Permission request already in progress, skipping');
+      return;
+    }
+
     try {
+      permissionRequestingRef.current = true;
       let permissionResult;
 
       if (Platform.OS === 'android') {
@@ -89,21 +104,56 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         permissionResult = await request(PERMISSIONS.IOS.CONTACTS);
       }
 
+      console.log('[AddMember] Permission result:', permissionResult);
+
       if (permissionResult === RESULTS.GRANTED) {
         setHasContactsPermission(true);
         loadContacts();
-      } else {
+      } else if (permissionResult === RESULTS.BLOCKED || permissionResult === RESULTS.DENIED) {
         setHasContactsPermission(false);
-        Alert.alert(
-          'Permission Required',
-          'Please allow access to contacts to add members from your registered friends.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Allow Access', onPress: () => requestContactsPermission() },
-          ]
-        );
+
+        // Only show alert once - don't create infinite loop
+        // If permission is blocked, user needs to go to Settings
+        const message = permissionResult === RESULTS.BLOCKED
+          ? 'Contacts permission is blocked. Please enable it in Settings to add members from your registered friends.'
+          : 'Please allow access to contacts to add members from your registered friends.';
+
+        const buttons = permissionResult === RESULTS.BLOCKED
+          ? [
+              { text: 'Cancel', style: 'cancel', onPress: () => { permissionRequestingRef.current = false; } },
+              {
+                text: 'Open Settings',
+                onPress: () => {
+                  permissionRequestingRef.current = false;
+                  const { Linking } = require('react-native');
+                  if (Platform.OS === 'ios') {
+                    Linking.openURL('app-settings:');
+                  } else {
+                    Linking.openSettings();
+                  }
+                }
+              },
+            ]
+          : [
+              { text: 'Cancel', style: 'cancel', onPress: () => { permissionRequestingRef.current = false; } },
+              {
+                text: 'Allow Access',
+                onPress: async () => {
+                  permissionRequestingRef.current = false;
+                  // Try one more time - if still denied, it will show blocked message
+                  await requestContactsPermission();
+                }
+              },
+            ];
+
+        Alert.alert('Permission Required', message, buttons);
+      } else {
+        // Reset ref for other results (like UNAVAILABLE)
+        permissionRequestingRef.current = false;
       }
     } catch (error) {
+      console.error('[AddMember] Error requesting contacts permission:', error);
+      permissionRequestingRef.current = false;
       Alert.alert('Error', 'Failed to request contacts permission');
     }
   };
@@ -638,7 +688,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
                     {displayName}
                   </Text>
                   <Text style={styles(colors).contactPhone}>
-                    {phoneNumber}
+                    {formatPhoneForDisplay(phoneNumber)}
                   </Text>
                   {contact.isRegistered && (
                     <View style={styles(colors).registeredBadge}>

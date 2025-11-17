@@ -1,4 +1,4 @@
-import React, {useEffect, useState, useCallback} from 'react'; // Added useCallback
+import React, {useEffect, useState, useCallback, useRef, useMemo} from 'react'; // Added useCallback, useRef, useMemo
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -26,6 +26,7 @@ import { ensureDataUri } from '../utils/imageUtils';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import { typography } from '../utils/typography'; // Assuming this path is correct
 import { ExpensesSkeleton, BalancesSkeleton, SettlementSkeleton } from '../components/SkeletonLoader';
+import { GroupInfoModal } from '../components/GroupInfoModal';
 
 // --- ANIMATION ---
 // Enable LayoutAnimation for Android
@@ -128,40 +129,156 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   // --- STATE ---
   const [activeTab, setActiveTab] = useState<TabId>('expenses');
   const [showGroupOptions, setShowGroupOptions] = useState(false);
+  const [showGroupDetailsModal, setShowGroupDetailsModal] = useState(false);
   const [currentGroup, setCurrentGroup] = useState(group); // Track current group data locally
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [groupMembers, setGroupMembers] = useState<Member[]>([]);
   const [balances, setBalances] = useState<Record<string, {net: number}>>({});
   const [settlements, setSettlements] = useState<any[]>([]);
   const [firebaseSettlements, setFirebaseSettlements] = useState<Settlement[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start as true for initial load
+  const [initialLoad, setInitialLoad] = useState(true); // Track first load
+  const [dataLoaded, setDataLoaded] = useState(false); // Track if data has been loaded at least once
   const [refreshing, setRefreshing] = useState(false);
   const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
   const [isGroupAdmin, setIsGroupAdmin] = useState(false);
   const [settlementLoading, setSettlementLoading] = useState(false);
 
-  
+
   // --- LOGIC (Wrapped in useCallback) ---
 
-  const loadGroupData = useCallback(async () => {
+  // Helper function to calculate balances from expenses
+  const calculateBalancesFromExpenses = useCallback((expenses: any[], members: any[], paidSettlements: Settlement[] = []) => {
+    const balances: Record<string, {net: number}> = {};
+
+    // Initialize balances for all members
+    members.forEach(member => {
+      balances[member.userId] = { net: 0 };
+    });
+
+    // Process each expense
+    expenses.forEach(expense => {
+      const payerId = expense.paidBy.id;
+
+      expense.participants.forEach((participant: any) => {
+        const participantId = participant.id || participant.userId;
+        if (participantId !== payerId) {
+          // Participant owes payer
+          if (balances[participantId]) {
+            balances[participantId].net -= participant.amount;
+          }
+          if (balances[payerId]) {
+            balances[payerId].net += participant.amount;
+          }
+        }
+      });
+    });
+
+    // Subtract paid settlements from balances
+    paidSettlements.forEach(settlement => {
+      if (settlement.status === 'paid') {
+        const fromUserId = settlement.fromUserId;
+        const toUserId = settlement.toUserId;
+        const amount = settlement.amount;
+
+        // Reduce debt for payer and credit for receiver
+        if (balances[fromUserId]) {
+          balances[fromUserId].net += amount; // Reduce debt (move towards positive)
+        }
+        if (balances[toUserId]) {
+          balances[toUserId].net -= amount; // Reduce credit (move towards zero)
+        }
+      }
+    });
+
+    return balances;
+  }, []);
+
+  // Helper function to calculate optimal settlements
+  const calculateOptimalSettlements = useCallback((balances: Record<string, {net: number}>, members: any[]) => {
+    const settlements: any[] = [];
+
+    // Create arrays of creditors and debtors
+    const creditors = Object.entries(balances)
+      .filter(([, balance]) => balance.net > 0)
+      .map(([userId, balance]) => {
+        const member = members.find(m => m.userId === userId);
+        return {
+          userId,
+          name: member?.name || 'Unknown',
+          amount: balance.net
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    const debtors = Object.entries(balances)
+      .filter(([, balance]) => balance.net < 0)
+      .map(([userId, balance]) => {
+        const member = members.find(m => m.userId === userId);
+        return {
+          userId,
+          name: member?.name || 'Unknown',
+          amount: Math.abs(balance.net)
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    // Greedy algorithm to minimize transactions
+    let i = 0, j = 0;
+
+    while (i < creditors.length && j < debtors.length) {
+      const creditor = creditors[i];
+      const debtor = debtors[j];
+
+      const settleAmount = Math.min(creditor.amount, debtor.amount);
+
+      if (settleAmount > 0.01) {
+        settlements.push({
+          id: `${debtor.userId}-${creditor.userId}`,
+          fromUserId: debtor.userId,
+          toUserId: creditor.userId,
+          from: debtor.name + (debtor.userId === currentUserId ? ' (You)' : ''),
+          to: creditor.name + (creditor.userId === currentUserId ? ' (You)' : ''),
+          amount: settleAmount
+        });
+      }
+
+      creditor.amount -= settleAmount;
+      debtor.amount -= settleAmount;
+
+      if (creditor.amount < 0.01) i++;
+      if (debtor.amount < 0.01) j++;
+    }
+
+    return settlements;
+  }, [currentUserId]);
+
+  const loadGroupData = useCallback(async (isRefresh = false) => {
     const groupId = currentGroup?.id || group?.id;
     if (!groupId) {
+      setLoading(false);
+      setInitialLoad(false);
+      setDataLoaded(true);
       return;
     }
-    setLoading(true);
-    
+
+    // Only show loading spinner on initial load, not on focus refresh or if data already loaded
+    if (!isRefresh && initialLoad && !dataLoaded) {
+      setLoading(true);
+    }
+
     try {
       // Import Firebase service dynamically
       const { firebaseService } = await import('../services/firebaseService');
-      
+
       // Load real group data
-      const [updatedGroup, groupExpenses] = await Promise.all([
+      const [updatedGroup, groupExpenses, loadedSettlements] = await Promise.all([
         firebaseService.getGroupById(groupId),
-        firebaseService.getGroupExpenses(groupId)
+        firebaseService.getGroupExpenses(groupId),
+        firebaseService.getGroupSettlements(groupId).catch(() => [])
       ]);
 
       if (updatedGroup) {
-        
         // Update the main group object with fresh data (including cover image)
         const updatedGroupData = {
           ...currentGroup,
@@ -169,14 +286,6 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           coverImageBase64: updatedGroup.coverImageBase64
         };
 
-        // Update the local group state to reflect fresh data
-        setCurrentGroup(updatedGroupData);
-
-        // Update the group object in parent navigation params for consistency
-        // Remove base64 data to avoid navigation param size limits
-        const { coverImageBase64, ...groupWithoutBase64 } = updatedGroupData;
-        navigation.setParams({ group: groupWithoutBase64 });
-        
         const members = updatedGroup.members.map(member => ({
           userId: member.userId,
           name: member.name,
@@ -186,96 +295,102 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           isCreator: updatedGroup.createdBy === member.userId,
           role: member.role
         }));
-        
-        setGroupMembers(members);
-        setIsGroupAdmin(
-          updatedGroup.createdBy === currentUserId || 
-          members.some(m => m.userId === currentUserId && m.isAdmin)
-        );
-      }
 
-      // Transform Firebase expenses to component format with proper member mapping
-      const transformedExpenses = groupExpenses.map(expense => {
-        // Map participants with proper member data
-        const enrichedParticipants = expense.participants.map(participant => {
-          const member = updatedGroup?.members.find(m => m.userId === participant.id);
-          
+        // Transform Firebase expenses to component format with proper member mapping
+        const transformedExpenses = groupExpenses.map(expense => {
+          // Map participants with proper member data
+          const enrichedParticipants = expense.participants.map(participant => {
+            const member = updatedGroup?.members.find(m => m.userId === participant.id);
+
+            return {
+              ...participant,
+              userId: participant.id, // Ensure userId field exists
+              name: participant.name || member?.name || 'Unknown User',
+              email: member?.phoneNumber || '',
+              avatar: member?.profileImage || '',
+            };
+          });
+
           return {
-            ...participant,
-            userId: participant.id, // Ensure userId field exists
-            name: participant.name || member?.name || 'Unknown User',
-            email: member?.phoneNumber || '',
-            avatar: member?.profileImage || '',
+            id: expense.id,
+            description: expense.description,
+            amount: expense.amount,
+            category: expense.category,
+            paidBy: expense.paidBy.id,
+            paidByName: expense.paidBy.name,
+            participants: enrichedParticipants,
+            createdAt: { toDate: () => new Date(expense.createdAt) },
+            receiptBase64: expense.receiptBase64,
+            // Add receiptUrl for compatibility with ExpenseDetailScreen
+            receiptUrl: ensureDataUri(expense.receiptBase64),
           };
         });
 
-        // Debug receipt data transformation
-        if (expense.receiptBase64) {
-          // Process receipt image
-        }
+        // Calculate balances dynamically, excluding paid settlements
+        const paidSettlements = loadedSettlements.filter(s => s.status === 'paid');
+        const calculatedBalances = calculateBalancesFromExpenses(
+          groupExpenses,
+          updatedGroup?.members || [],
+          paidSettlements
+        );
 
-        return {
-          id: expense.id,
-          description: expense.description,
-          amount: expense.amount,
-          category: expense.category,
-          paidBy: expense.paidBy.id,
-          paidByName: expense.paidBy.name,
-          participants: enrichedParticipants,
-          createdAt: { toDate: () => new Date(expense.createdAt) },
-          receiptBase64: expense.receiptBase64,
-          // Add receiptUrl for compatibility with ExpenseDetailScreen
-          receiptUrl: ensureDataUri(expense.receiptBase64),
-        };
-      });
-      
-      setExpenses(transformedExpenses);
+        // Calculate settlements from remaining balances
+        const calculatedSettlements = calculateOptimalSettlements(calculatedBalances, updatedGroup?.members || []);
 
-      // Load Firebase settlements first
-      let loadedFirebaseSettlements: Settlement[] = [];
-      try {
-        loadedFirebaseSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
-        setFirebaseSettlements(loadedFirebaseSettlements);
-      } catch (settlementError) {
-        console.error('GroupDetailScreen: Failed to load settlements from Firebase:', settlementError);
-        // Continue with empty settlements - balance calculations will still work without them
+        const isAdmin = updatedGroup.createdBy === currentUserId || members.some(m => m.userId === currentUserId && m.isAdmin);
+
+        // CRITICAL: Batch all state updates together to prevent flickering
+        // Use a single synchronous block to update all states at once
+        setCurrentGroup(updatedGroupData);
+        setGroupMembers(members);
+        setIsGroupAdmin(isAdmin);
+        setExpenses(transformedExpenses);
+        setFirebaseSettlements(loadedSettlements);
+        setBalances(calculatedBalances);
+        setSettlements(calculatedSettlements);
+        setDataLoaded(true);
       }
 
-      // Calculate balances dynamically, excluding paid settlements
-      const paidSettlements = loadedFirebaseSettlements.filter(s => s.status === 'paid');
-      const calculatedBalances = calculateBalancesFromExpenses(
-        groupExpenses, 
-        updatedGroup?.members || [], 
-        paidSettlements
-      );
-      setBalances(calculatedBalances);
-
-      // Calculate settlements from remaining balances
-      const calculatedSettlements = calculateOptimalSettlements(calculatedBalances, updatedGroup?.members || []);
-      setSettlements(calculatedSettlements);
-      
     } catch (err) {
-      Alert.alert('Error', 'Failed to load group data');
+      console.error('Error loading group data:', err);
+      if (!isRefresh && !dataLoaded) {
+        Alert.alert('Error', 'Failed to load group data');
+      }
     } finally {
       setLoading(false);
+      setInitialLoad(false);
     }
-  }, []);
+  }, [currentGroup, group, currentUserId, initialLoad, dataLoaded, calculateBalancesFromExpenses, calculateOptimalSettlements]);
 
-  // Load data once on mount
+  // Load data once on mount only
   useEffect(() => {
-    loadGroupData();
-  }, []); // Only run once on mount
+    let isMounted = true;
 
-  // Refresh data when screen comes into focus (e.g., returning from ManageGroup)
+    if (isMounted && initialLoad) {
+      loadGroupData(false);
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, []); // Empty deps - run only once on mount
+
+  // Refresh data when screen comes into focus (skip first focus which is mount)
+  const focusCountRef = useRef(0);
   useFocusEffect(
     useCallback(() => {
-      loadGroupData();
-    }, [])
+      focusCountRef.current += 1;
+
+      // Skip first focus (which is mount - already handled by useEffect)
+      if (focusCountRef.current > 1) {
+        loadGroupData(false);
+      }
+    }, [loadGroupData])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadGroupData();
+    await loadGroupData(true); // Pass true to indicate this is a refresh
     setRefreshing(false);
   }, [loadGroupData]); // Depends on the stable loadGroupData
 
@@ -491,112 +606,6 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     }
   }, [settlements, firebaseSettlements, balances, currentUserId, currentGroup.id, navigation]);
 
-  // Helper function to calculate balances from expenses
-  const calculateBalancesFromExpenses = useCallback((expenses: any[], members: any[], paidSettlements: Settlement[] = []) => {
-    const balances: Record<string, {net: number}> = {};
-    
-    // Initialize balances for all members
-    members.forEach(member => {
-      balances[member.userId] = { net: 0 };
-    });
-
-    // Process each expense
-    expenses.forEach(expense => {
-      const payerId = expense.paidBy.id;
-      
-      expense.participants.forEach((participant: any) => {
-        const participantId = participant.id || participant.userId;
-        if (participantId !== payerId) {
-          // Participant owes payer
-          if (balances[participantId]) {
-            balances[participantId].net -= participant.amount;
-          }
-          if (balances[payerId]) {
-            balances[payerId].net += participant.amount;
-          }
-        }
-      });
-    });
-
-    // Subtract paid settlements from balances
-    paidSettlements.forEach(settlement => {
-      if (settlement.status === 'paid') {
-        const fromUserId = settlement.fromUserId;
-        const toUserId = settlement.toUserId;
-        const amount = settlement.amount;
-        
-        // Reduce debt for payer and credit for receiver
-        if (balances[fromUserId]) {
-          balances[fromUserId].net += amount; // Reduce debt (move towards positive)
-        }
-        if (balances[toUserId]) {
-          balances[toUserId].net -= amount; // Reduce credit (move towards zero)
-        }
-      }
-    });
-
-    return balances;
-  }, []);
-
-  // Helper function to calculate optimal settlements
-  const calculateOptimalSettlements = useCallback((balances: Record<string, {net: number}>, members: any[]) => {
-    const settlements: any[] = [];
-    
-    // Create arrays of creditors and debtors
-    const creditors = Object.entries(balances)
-      .filter(([, balance]) => balance.net > 0)
-      .map(([userId, balance]) => {
-        const member = members.find(m => m.userId === userId);
-        return { 
-          userId, 
-          name: member?.name || 'Unknown',
-          amount: balance.net 
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    const debtors = Object.entries(balances)
-      .filter(([, balance]) => balance.net < 0)
-      .map(([userId, balance]) => {
-        const member = members.find(m => m.userId === userId);
-        return { 
-          userId, 
-          name: member?.name || 'Unknown',
-          amount: Math.abs(balance.net) 
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    // Greedy algorithm to minimize transactions
-    let i = 0, j = 0;
-    
-    while (i < creditors.length && j < debtors.length) {
-      const creditor = creditors[i];
-      const debtor = debtors[j];
-      
-      const settleAmount = Math.min(creditor.amount, debtor.amount);
-      
-      if (settleAmount > 0.01) {
-        settlements.push({
-          id: `${debtor.userId}-${creditor.userId}`,
-          fromUserId: debtor.userId,
-          toUserId: creditor.userId,
-          from: debtor.name + (debtor.userId === currentUserId ? ' (You)' : ''),
-          to: creditor.name + (creditor.userId === currentUserId ? ' (You)' : ''),
-          amount: settleAmount
-        });
-      }
-      
-      creditor.amount -= settleAmount;
-      debtor.amount -= settleAmount;
-      
-      if (creditor.amount < 0.01) i++;
-      if (debtor.amount < 0.01) j++;
-    }
-    
-    return settlements;
-  }, [currentUserId]);
-
   const categoryMapping: Record<number | string, {emoji: string; color: string}> = {
     1: {emoji: '🍽️', color: '#FEF3C7'},
     2: {emoji: '🚗', color: '#FECACA'},
@@ -605,9 +614,14 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   };
 
   const toggleUserExpansion = useCallback((userId: string) => {
-    // --- UI IMPROVEMENT ---
-    // Animate the expansion
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    // Only animate on user interaction, not during data loads
+    if (Platform.OS === 'ios') {
+      LayoutAnimation.configureNext(LayoutAnimation.create(
+        200,
+        LayoutAnimation.Types.easeInEaseOut,
+        LayoutAnimation.Properties.opacity
+      ));
+    }
     setExpandedUsers(prev => ({...prev, [userId]: !prev[userId]}));
   }, []); // setExpandedUsers is stable
 
@@ -1123,7 +1137,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   };
 
   const handleTabPress = useCallback((tabId: TabId) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    // Remove animation to prevent flickering - tabs will switch smoothly without LayoutAnimation
     setActiveTab(tabId);
   }, []);
 
@@ -1132,6 +1146,58 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   const styles = createStyles(colors, scale, scaledFontSize, insets);
 
   // --- JSX ---
+
+  // Show skeleton loader during initial load
+  if (loading && initialLoad) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={scale(24)} color={colors.primaryText} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Group Details</Text>
+          <TouchableOpacity style={styles.settingsButton} disabled>
+            <Ionicons name="settings" size={scale(20)} color={colors.secondaryText} />
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={styles.scrollContainer}>
+          <View style={styles.groupInfo}>
+            <View style={styles.groupImageContainer}>
+              <View style={styles.groupAvatarContainer}>
+                <ActivityIndicator size="large" color={colors.primaryButton} />
+              </View>
+            </View>
+            <Text style={styles.groupName}>{currentGroup?.name || 'Loading...'}</Text>
+          </View>
+          <View style={styles.summarySection}>
+            <Text style={styles.summaryTitle}>Loading...</Text>
+            <ActivityIndicator size="small" color={colors.primaryButton} />
+          </View>
+          <View style={styles.tabContainer}>
+            {TAB_CONFIG.map(tab => (
+              <View key={tab.id} style={[styles.tab, activeTab === tab.id && styles.activeTab]}>
+                <View style={styles.tabContent}>
+                  <Ionicons
+                    name={tab.icon as any}
+                    size={scale(16)}
+                    color={colors.secondaryText}
+                    style={styles.tabIcon}
+                  />
+                  <Text style={styles.tabText}>{tab.label}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+          <View style={styles.tabContentContainer}>
+            {activeTab === 'expenses' && <ExpensesSkeleton />}
+            {activeTab === 'balances' && <BalancesSkeleton />}
+            {activeTab === 'settlement' && <SettlementSkeleton />}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -1139,10 +1205,14 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           <Ionicons name="arrow-back" size={scale(24)} color={colors.primaryText} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Group Details</Text>
-        <TouchableOpacity style={styles.settingsButton} onPress={() => setShowGroupOptions(true)}>
-          {/* --- ICON FIX --- */}
-          <Ionicons name="settings" size={scale(20)} color={colors.secondaryText} />
-        </TouchableOpacity>
+        <View style={styles.headerRightIcons}>
+          <TouchableOpacity style={styles.iconButton} onPress={() => setShowGroupDetailsModal(true)}>
+            <Ionicons name="information-circle-outline" size={scale(24)} color={colors.secondaryText} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconButton} onPress={() => setShowGroupOptions(true)}>
+            <Ionicons name="settings" size={scale(20)} color={colors.secondaryText} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -1297,19 +1367,6 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             {/* Handle for Bottom Sheet */}
             <View style={styles.modalHandle} />
 
-            <TouchableOpacity
-              style={styles.optionItem}
-              onPress={() => {
-                setShowGroupOptions(false);
-                // Remove base64 data to avoid navigation param size limits
-                const { coverImageBase64, ...groupWithoutBase64 } = currentGroup;
-                navigation.navigate('GroupDetails', { group: groupWithoutBase64 });
-              }}
-            >
-              <MaterialIcons name="info" size={scale(20)} color={colors.secondaryText} style={styles.optionIconStyle} />
-              <Text style={styles.optionText}>Group Details</Text>
-            </TouchableOpacity>
-
             <TouchableOpacity style={styles.optionItem} onPress={() => { setShowGroupOptions(false); handleAddMember(); }}>
               <MaterialIcons name="person-add" size={scale(20)} color={colors.secondaryText} style={styles.optionIconStyle} />
               <Text style={styles.optionText}>Add Member</Text>
@@ -1347,6 +1404,16 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Group Info Modal - Separate Component */}
+      <GroupInfoModal
+        visible={showGroupDetailsModal}
+        onClose={() => setShowGroupDetailsModal(false)}
+        currentGroup={currentGroup}
+        groupMembers={groupMembers}
+        expenses={expenses}
+        currentUserId={currentUserId}
+      />
     </SafeAreaView>
   );
 };
@@ -1419,6 +1486,12 @@ const createStyles = (
       color: colors.primaryText,
     },
     backButton: {padding: scale(8)},
+    headerRightIcons: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: scale(8),
+    },
+    iconButton: {padding: scale(8)},
     settingsButton: {padding: scale(8)},
     groupInfo: {alignItems: 'center', paddingVertical: scale(20)},
     groupImageContainer: {position: 'relative', marginBottom: scale(12)},

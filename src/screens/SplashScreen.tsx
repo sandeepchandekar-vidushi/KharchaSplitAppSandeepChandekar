@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Image, StyleSheet, Dimensions, Animated, Text } from 'react-native';
+import { View, Image, StyleSheet, Dimensions, Animated, Text, Easing } from 'react-native';
 import { wp, hp } from '../utils/deviceDimensions';
 
 interface SplashScreenProps {
@@ -15,9 +15,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onAnimationEnd }) =>
 
   // Logo and text animation values
   const logoOpacity = useRef(new Animated.Value(0)).current;
-  const logoScale = useRef(new Animated.Value(0.5)).current;
+  const logoScale = useRef(new Animated.Value(0.3)).current;
+  const logoZoom = useRef(new Animated.Value(1)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
-  const textSlide = useRef(new Animated.Value(20)).current;
+  const textScale = useRef(new Animated.Value(0.8)).current;
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
@@ -48,45 +49,62 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onAnimationEnd }) =>
           useNativeDriver: true,
         }),
       ]).start(() => {
-        // Step 3: Show logo with scale animation - FASTER
+        // Step 3: Show logo with smooth scale animation
         Animated.parallel([
           Animated.timing(logoOpacity, {
             toValue: 1,
-            duration: 250, // Reduced from 400ms to 250ms
+            duration: 300,
             useNativeDriver: true,
           }),
           Animated.spring(logoScale, {
             toValue: 1,
-            tension: 30, // Increased tension for faster animation
-            friction: 6, // Reduced friction for faster animation
+            tension: 40,
+            friction: 7,
             useNativeDriver: true,
           }),
         ]).start(() => {
-          // Step 4: Show app name - FASTER
-          Animated.parallel([
-            Animated.timing(textOpacity, {
-              toValue: 1,
-              duration: 250, // Reduced from 400ms to 250ms
+          // Step 4: Smooth zoom in and zoom out animation
+          Animated.sequence([
+            Animated.timing(logoZoom, {
+              toValue: 1.15, // Zoom in slightly
+              duration: 400,
+              easing: Easing.inOut(Easing.ease),
               useNativeDriver: true,
             }),
-            Animated.timing(textSlide, {
-              toValue: 0,
-              duration: 250, // Reduced from 400ms to 250ms
+            Animated.timing(logoZoom, {
+              toValue: 1, // Zoom back to normal
+              duration: 400,
+              easing: Easing.inOut(Easing.ease),
               useNativeDriver: true,
             }),
-          ]).start();
+          ]).start(() => {
+            // Step 5: Show app name with scale effect
+            Animated.parallel([
+              Animated.timing(textOpacity, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+              }),
+              Animated.spring(textScale, {
+                toValue: 1,
+                tension: 50,
+                friction: 7,
+                useNativeDriver: true,
+              }),
+            ]).start();
+          });
         });
       });
     });
 
-    // End splash screen after all animations - FASTER
+    // End splash screen after all animations
     const timer = setTimeout(() => {
       Animated.timing(fadeAnim, {
         toValue: 0,
-        duration: 300, // Reduced from 400ms to 300ms
+        duration: 400,
         useNativeDriver: true,
       }).start(() => onAnimationEnd());
-    }, 2000); // Reduced from 3000ms to 2000ms (2 seconds total)
+    }, 2800); // Extended to 2.8 seconds for complete animation sequence
 
     return () => {
       clearTimeout(timer);
@@ -121,35 +139,43 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onAnimationEnd }) =>
         ]}
       />
 
-      {/* Logo - appears after panels animate */}
-      <Animated.View
-        style={[
-          styles.logoContainer,
-          {
-            opacity: logoOpacity,
-            transform: [{ scale: logoScale }],
-          },
-        ]}
-      >
-        <Image
-          source={require('../../asset/Images/logo.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-      </Animated.View>
+      {/* Logo and Text - centered together */}
+      <View style={styles.contentContainer}>
+        {/* Logo - appears after panels animate */}
+        <Animated.View
+          style={[
+            styles.logoContainer,
+            {
+              opacity: logoOpacity,
+              transform: [
+                { scale: Animated.multiply(logoScale, logoZoom) }
+              ],
+            },
+          ]}
+        >
+          <Image
+            source={require('../../asset/Images/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </Animated.View>
 
-      {/* App Name - appears after logo */}
-      <Animated.View
-        style={[
-          styles.textContainer,
-          {
-            opacity: textOpacity,
-            transform: [{ translateY: textSlide }],
-          },
-        ]}
-      >
-        <Text style={styles.appName}>KharchaSplit</Text>
-      </Animated.View>
+        {/* App Name - appears after logo */}
+        <Animated.View
+          style={[
+            styles.textContainer,
+            {
+              opacity: textOpacity,
+              transform: [{ scale: textScale }],
+            },
+          ]}
+        >
+          <View style={styles.appNameContainer}>
+            <Text style={styles.appNameKharcha}>Kharcha</Text>
+            <Text style={styles.appNameSplit}>Split</Text>
+          </View>
+        </Animated.View>
+      </View>
     </Animated.View>
   );
 };
@@ -179,25 +205,37 @@ const styles = StyleSheet.create({
     width: screenWidth / 2,
     backgroundColor: '#1A5F5F', // Dark teal color from Figma
   },
-  logoContainer: {
+  contentContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
   },
+  logoContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   logo: {
-    width: wp ? wp(30) : 120,
-    height: wp ? wp(30) : 120,
+    width: wp ? wp(35) : 140,
+    height: wp ? wp(35) : 140,
   },
   textContainer: {
-    position: 'absolute',
-    bottom: hp ? hp(20) : 160,
     alignItems: 'center',
-    zIndex: 10,
+    marginTop: 12, // Tight gap between logo and text
   },
-  appName: {
-    fontSize: wp ? wp(7) : 28,
-    fontWeight: 'bold',
-    color: '#1A5F5F', // Dark teal to match the design
-    letterSpacing: 1,
+  appNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  appNameKharcha: {
+    fontSize: wp ? wp(9) : 36,
+    fontWeight: '700',
+    color: '#1A5F5F', // Dark teal color
+    letterSpacing: 2,
+  },
+  appNameSplit: {
+    fontSize: wp ? wp(9) : 36,
+    fontWeight: '700',
+    color: '#E89F3C', // Orange/golden color from logo
+    letterSpacing: 2,
   },
 });

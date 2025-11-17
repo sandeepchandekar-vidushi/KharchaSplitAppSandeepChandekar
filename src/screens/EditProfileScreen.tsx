@@ -129,6 +129,9 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
       // Update in Firebase
       const updatedUser = await firebaseService.updateUser(user.id, updateData);
 
+      // Clear base64 image from memory after successful upload
+      setProfileImageBase64('');
+
       // Update local storage
       await userStorage.saveUser(updatedUser);
 

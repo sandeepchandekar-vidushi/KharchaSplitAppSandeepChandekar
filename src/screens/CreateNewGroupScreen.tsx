@@ -25,6 +25,7 @@ import { firebaseService, CreateGroup } from '../services/firebaseService';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ensureDataUri } from '../utils/imageUtils';
 import { contactsCacheService } from '../services/contactsCacheService';
+import { formatPhoneForDisplay } from '../utils/phoneFormatter';
 
 interface GroupData {
   name: string;
@@ -76,6 +77,14 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
       contactsCacheService.init();
       checkContactsPermission();
     }
+
+    // Cleanup: Clear base64 image from memory on unmount
+    return () => {
+      setGroupData(prev => ({
+        ...prev,
+        coverImageBase64: null,
+      }));
+    };
   }, []); // Remove dependencies to prevent re-runs
 
   // Shimmer animation effect
@@ -573,6 +582,11 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
       // Create group in Firebase
       const newGroup = await firebaseService.createGroup(createGroupData, user.id);
 
+      // Clear base64 image from memory after successful upload
+      setGroupData(prev => ({
+        ...prev,
+        coverImageBase64: null,
+      }));
 
       Alert.alert(
         'Success',
@@ -813,17 +827,37 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
                 </Text>
               </View>
             ) : (
-              searchFilteredContacts.map(contact => (
+              searchFilteredContacts.map(contact => {
+                const displayName = contact.userProfile?.name || contact.displayName || 'Unknown';
+                const firstLetter = displayName && displayName.length > 0 ? displayName.charAt(0).toUpperCase() : '?';
+                return (
                 <View key={contact.recordID} style={styles.contactItem}>
                   <View style={styles.contactInfo}>
-                    <Text style={styles.contactName}>
-                      {contact.userProfile?.name || contact.displayName}
-                    </Text>
-                    {contact.phoneNumbers && contact.phoneNumbers[0] && (
-                      <Text style={styles.contactPhone}>
-                        {contact.phoneNumbers[0].number}
-                      </Text>
+                    {contact.thumbnailPath ? (
+                      <Image source={{ uri: contact.thumbnailPath }} style={styles.contactImage} />
+                    ) : (
+                      <View style={styles.contactImagePlaceholder}>
+                        <Text style={styles.contactImagePlaceholderText}>
+                          {firstLetter}
+                        </Text>
+                      </View>
                     )}
+                    <View style={styles.contactDetails}>
+                      <Text style={styles.contactName}>
+                        {displayName}
+                      </Text>
+                      {contact.phoneNumbers && contact.phoneNumbers[0] && (
+                        <Text style={styles.contactPhone}>
+                          {formatPhoneForDisplay(contact.phoneNumbers[0].number)}
+                        </Text>
+                      )}
+                      {contact.isRegistered && (
+                        <View style={styles.registeredBadge}>
+                          <Ionicons name="checkmark-circle" size={14} color={colors.primaryButton} />
+                          <Text style={styles.registeredText}>Registered</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <View style={styles.contactActions}>
                     {contact.isRegistered ? (
@@ -858,7 +892,8 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
                     )}
                   </View>
                 </View>
-              ))
+              );
+              })
             )
           ) : (
             // Permission not granted - show permission UI
@@ -1017,6 +1052,30 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
     },
     contactInfo: {
       flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    contactImage: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+    },
+    contactImagePlaceholder: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: colors.primaryButton + '20',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    contactImagePlaceholderText: {
+      color: colors.primaryButton,
+      fontWeight: 'bold',
+      fontSize: 18,
+    },
+    contactDetails: {
+      flex: 1,
+      marginLeft: 12,
     },
     contactName: {
       fontSize: 16,
@@ -1027,6 +1086,18 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
     contactPhone: {
       fontSize: 14,
       color: colors.secondaryText,
+      marginBottom: 4,
+    },
+    registeredBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 4,
+    },
+    registeredText: {
+      fontSize: 12,
+      color: colors.primaryButton,
+      marginLeft: 4,
+      fontWeight: '500',
     },
     contactActions: {
       marginLeft: 12,
@@ -1047,7 +1118,7 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
       backgroundColor: colors.secondaryText,
     },
     inviteButton: {
-      backgroundColor: colors.primaryButton,
+      backgroundColor: '#3B82F6', // Blue
     },
     actionButtonText: {
       color: 'white',

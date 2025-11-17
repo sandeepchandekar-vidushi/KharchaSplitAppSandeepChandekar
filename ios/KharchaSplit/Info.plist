@@ -31,18 +31,23 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
-	<key>NSContactsUsageDescription</key>
-	<string>KharchaSplit needs access to your contacts to help you easily add friends to your groups who are already using the app.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>KharchaSplit needs access to your photo library to let you select profile pictures and expense receipts.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>KharchaSplit needs access to your camera to let you take photos for profile pictures and expense receipts.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>KharchaSplit needs access to your contacts to help you easily add friends to your groups who are already using the app.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>KharchaSplit uses Face ID to secure your app and protect your financial data.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>KharchaSplit uses your location to simplify the process of adding and categorizing expenses, as well as for security purposes. </string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>KharchaSplit needs access to your photo library to let you select profile pictures and expense receipts.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>MaterialIcons.ttf</string>
+		<string>Ionicons.ttf</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>
@@ -57,10 +62,5 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
-	<key>UIAppFonts</key>
-	<array>
-		<string>MaterialIcons.ttf</string>
-		<string>Ionicons.ttf</string>
-	</array>
 </dict>
 </plist>

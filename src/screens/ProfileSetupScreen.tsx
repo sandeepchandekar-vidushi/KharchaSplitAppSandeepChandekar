@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -72,6 +72,18 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     }
   };
 
+  // Ref to store debounce timer for cleanup
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
   // Handle referral code input with debounced validation
   const handleReferralCodeChange = (text: string) => {
     const formattedText = text.toUpperCase().replace(/[^A-Z0-9]/g, ''); // Only allow alphanumeric
@@ -80,12 +92,16 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     // Clear previous validation
     setReferralValid(null);
 
-    // Debounce validation
-    const timeoutId = setTimeout(() => {
-      validateReferralCode(formattedText);
-    }, 500);
+    // Clear previous debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
 
-    return () => clearTimeout(timeoutId);
+    // Debounce validation
+    debounceTimerRef.current = setTimeout(() => {
+      validateReferralCode(formattedText);
+      debounceTimerRef.current = null;
+    }, 500);
   };
 
   const handleSaveProfile = async () => {

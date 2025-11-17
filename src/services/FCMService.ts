@@ -81,13 +81,25 @@ export class FCMService {
    */
   static async getAndSaveFCMToken(userId: string) {
     try {
-      // Register device for remote messages first (required for iOS and some Android versions)
+      // iOS requires proper APS entitlements for push notifications
+      // Skip FCM token registration if not configured to prevent app crashes
       if (Platform.OS === 'ios') {
-        await messaging().registerDeviceForRemoteMessages();
+        try {
+          await messaging().registerDeviceForRemoteMessages();
+        } catch (registerError: any) {
+          // Check if error is due to missing APS entitlement (common in development)
+          if (registerError?.message?.includes('aps-environment') ||
+              registerError?.message?.includes('entitlement')) {
+            console.log('ℹ️ Push notifications not configured for iOS. Skipping FCM token registration.');
+            console.log('ℹ️ To enable: Add Push Notifications capability in Xcode');
+            return; // Exit gracefully without token
+          }
+          throw registerError; // Re-throw other errors
+        }
       } else {
         // For Android, check if we need to register
         const isRegistered = messaging().isDeviceRegisteredForRemoteMessages;
-        
+
         if (!isRegistered) {
           await messaging().registerDeviceForRemoteMessages();
         }
@@ -95,16 +107,23 @@ export class FCMService {
 
       // Get FCM token
       const fcmToken = await messaging().getToken();
-      
+
       if (fcmToken) {
+        console.log('✅ FCM token obtained successfully');
         // Save to AsyncStorage
         await AsyncStorage.setItem(FCM_TOKEN_KEY, fcmToken);
-        
+
         // Save to Firebase for this user
         await firebaseService.updateUser(userId, { fcmToken });
       }
-    } catch (error) {
-      console.error('❌ Error getting FCM token:', error);
+    } catch (error: any) {
+      // Log error details for debugging but don't crash the app
+      if (error?.message?.includes('aps-environment') ||
+          error?.message?.includes('entitlement')) {
+        console.log('ℹ️ Push notifications not configured. App will work without notifications.');
+      } else {
+        console.error('❌ Error getting FCM token:', error?.message || error);
+      }
     }
   }
 

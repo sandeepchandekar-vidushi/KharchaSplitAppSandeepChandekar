@@ -13,7 +13,6 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { ActivityScreen } from '../screens/ActivityScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { GroupDetailScreen } from '../screens/GroupDetailScreen';
-import { GroupDetailsScreen } from '../screens/GroupDetailsScreen';
 import { ManageGroupScreen } from '../screens/ManageGroupScreen';
 import { AddExpenseScreen } from '../screens/AddExpenseScreen';
 import { AddMemberScreen } from '../screens/AddMemberScreen';
@@ -33,7 +32,6 @@ type TabParamList = {
 type StackParamList = {
   HomeMain: undefined;
   GroupDetail: { group: any };
-  GroupDetails: { group: any };
   ManageGroup: { group: any };
   AddExpense: { group: any };
   AddMember: { group: any };
@@ -117,7 +115,6 @@ export const HomeStackNavigator: React.FC = () => {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeMain" component={HomeScreen} />
       <Stack.Screen name="GroupDetail" component={GroupDetailScreen} />
-      <Stack.Screen name="GroupDetails" component={GroupDetailsScreen} />
       <Stack.Screen name="ManageGroup" component={ManageGroupScreen} />
       <Stack.Screen name="AddExpense" component={AddExpenseScreen} />
       <Stack.Screen name="AddMember" component={AddMemberScreen} />
@@ -189,6 +186,7 @@ export const AuthenticatedNavigator: React.FC = () => {
 
   return (
     <Tab.Navigator
+      initialRouteName="Home"
       screenOptions={({ route }): BottomTabNavigationOptions => ({
         tabBarIcon: ({ focused }) => <TabBarIcon name={route.name as keyof TabParamList} focused={focused} />,
         tabBarActiveTintColor: colors.activeIcon,
@@ -200,8 +198,8 @@ export const AuthenticatedNavigator: React.FC = () => {
           height: getTabBarHeight(),
           paddingTop: tabBarPadding.paddingTop,
           paddingHorizontal: tabBarPadding.paddingHorizontal,
-          // Position the tab bar properly above the safe area
-          paddingBottom: insets.bottom > 0 ? insets.bottom : tabBarPadding.paddingBottom,
+          // No extra paddingBottom - height already includes insets.bottom
+          paddingBottom: 0,
           // Add shadow for better visibility
           shadowColor: colors.primaryText,
           shadowOffset: {
@@ -235,8 +233,8 @@ export const AuthenticatedNavigator: React.FC = () => {
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeStackNavigator} options={{ title: 'My Groups', headerShown: false }} />
       <Tab.Screen name="Activity" component={ActivityScreen} options={{ title: 'Activity', headerShown: false }} />
+      <Tab.Screen name="Home" component={HomeStackNavigator} options={{ title: 'My Groups', headerShown: false }} />
       <Tab.Screen name="Profile" component={ProfileStackNavigator} options={{ title: 'Profile', headerShown: false }} />
     </Tab.Navigator>
   );

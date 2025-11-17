@@ -143,6 +143,12 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
   // ... (unchanged logic functions)
   useEffect(() => {
     loadGroupMembers();
+
+    // Cleanup: Clear base64 receipt image from memory on unmount
+    return () => {
+      setReceiptImage(null);
+      setReceiptSize(0);
+    };
   }, [group]);
 
   const loadGroupMembers = async () => {
@@ -394,10 +400,14 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
 
       // Create expense in Firebase
       const createdExpense = await firebaseService.createGroupExpense(group.id, expense);
-      
+
+      // Clear base64 image from memory after successful upload
+      setReceiptImage(null);
+      setReceiptSize(0);
+
       Alert.alert("Success", "Expense saved successfully", [
-        { 
-          text: "OK", 
+        {
+          text: "OK",
           onPress: () => {
             // Call onReturn callback if provided
             if (route.params?.onReturn) {

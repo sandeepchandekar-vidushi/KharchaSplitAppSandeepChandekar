@@ -270,10 +270,21 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
 
       // Update group in Firebase
       await firebaseService.updateGroup(group.id, updateData);
-      
+
+      // Clear base64 image from memory after successful upload
+      if (groupData.coverImage?.startsWith('data:')) {
+        setGroupData(prev => ({
+          ...prev,
+          coverImage: null,
+        }));
+      }
+
       // Update original data to reflect saved state
-      setOriginalData(groupData);
-      
+      setOriginalData({
+        ...groupData,
+        coverImage: null, // Clear from original data too
+      });
+
       Alert.alert('Success', 'Group updated successfully!', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
