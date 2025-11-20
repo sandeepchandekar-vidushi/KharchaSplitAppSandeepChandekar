@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run lint:*)",
+      "Bash(pod install)",
+      "Bash(npm run doctor:*)",
+      "Bash(npx react-native:*)",
+      "Bash(npx tsc:*)",
+      "Bash(cat:*)",
+      "Bash(gem list:*)",
+      "Bash(ruby --version:*)",
+      "Bash(sudo gem install:*)",
+      "Bash(gem install:*)",
+      "Bash(brew --version:*)",
+      "Bash(export PATH=\"$HOME/.rbenv/shims:$PATH\")",
+      "Bash(pod:*)",
+      "Bash(export LANG=en_US.UTF-8)",
+      "Bash(npm install:*)",
+      "Bash(npm start)",
+      "Bash(keytool:*)",
+      "Bash(mv:*)",
+      "Bash(./gradlew assembleRelease:*)",
+      "Bash(./gradlew bundleRelease:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(/usr/libexec/java_home:*)",
+      "Bash(export JAVA_HOME=/Users/schandekar/Library/Java/JavaVirtualMachines/openjdk-22.0.1/Contents/Home:*)",
+      "Bash(android/gradlew:*)",
+      "Bash(find:*)",
+      "Bash(xargs cat:*)",
+      "Bash(npm run tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

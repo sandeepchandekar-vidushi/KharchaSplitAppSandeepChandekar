@@ -9,6 +9,8 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Modal,
+  FlatList,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -20,10 +22,25 @@ import { firebaseService, UpdateUserProfile } from '../services/firebaseService'
 import { userStorage } from '../services/userStorage';
 import { processProfileImage, getProfileImageUri } from '../utils/imageUtils';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
+import { userApi } from '../services/api/userApi';
 
 interface EditProfileScreenProps {
   onClose: () => void;
 }
+
+// Currency options
+const currencies = [
+  { code: "INR", symbol: "₹", name: "Indian Rupee" },
+  { code: "USD", symbol: "$", name: "US Dollar" },
+  { code: "EUR", symbol: "€", name: "Euro" },
+  { code: "GBP", symbol: "£", name: "British Pound" },
+  { code: "AUD", symbol: "A$", name: "Australian Dollar" },
+  { code: "CAD", symbol: "C$", name: "Canadian Dollar" },
+  { code: "SGD", symbol: "S$", name: "Singapore Dollar" },
+  { code: "AED", symbol: "د.إ", name: "UAE Dirham" },
+  { code: "JPY", symbol: "¥", name: "Japanese Yen" },
+  { code: "CNY", symbol: "¥", name: "Chinese Yuan" },
+];
 
 export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose }) => {
   const { colors } = useTheme();
@@ -34,7 +51,11 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
     email: '',
     alternateMobile: '',
     address: '',
+    preferredCurrency: 'INR',
   });
+
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
+  const selectedCurrency = currencies.find(c => c.code === formData.preferredCurrency) || currencies[0];
 
   const [selectedAltCountryCode, setSelectedAltCountryCode] = useState('+91');
   const [saving, setSaving] = useState(false);
@@ -55,6 +76,7 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
         email: user.email || '',
         alternateMobile: alternatePhoneWithoutCode,
         address: user.address || '',
+        preferredCurrency: user.preferredCurrency || 'INR',
       });
 
       // Update profile image state dynamically
@@ -123,11 +145,41 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
           : undefined,
         address: formData.address.trim() || undefined,
         profileImageBase64: profileImageBase64 || undefined,
+        preferredCurrency: formData.preferredCurrency,
       };
 
+      let updatedUser;
 
-      // Update in Firebase
-      const updatedUser = await firebaseService.updateUser(user.id, updateData);
+      // Try PostgreSQL backend first
+      try {
+        console.log('Updating user profile via PostgreSQL backend...');
+        const response = await userApi.updateUser(user.id, {
+          name: updateData.name,
+          email: updateData.email,
+          profileImageBase64: updateData.profileImageBase64,
+          preferredCurrency: updateData.preferredCurrency,
+        });
+
+        if (response.success) {
+          // Map API response to user format
+          updatedUser = {
+            ...user,
+            ...updateData,
+            profileImage: response.data.profileImage,
+          };
+          console.log('User profile updated successfully via PostgreSQL');
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        updatedUser = await firebaseService.updateUser(user.id, updateData);
+        console.log('User profile updated successfully via Firebase');
+      }
+
+      if (!updatedUser) {
+        throw new Error('Failed to update user profile');
+      }
 
       // Clear base64 image from memory after successful upload
       setProfileImageBase64('');
@@ -378,6 +430,26 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
               numberOfLines={3}
             />
           </View>
+
+          {/* Preferred Currency */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              Preferred Currency
+            </Text>
+            <TouchableOpacity
+              style={styles.currencySelector}
+              onPress={() => setShowCurrencyModal(true)}
+            >
+              <View style={styles.currencyInfo}>
+                <Text style={styles.currencySymbol}>{selectedCurrency.symbol}</Text>
+                <View style={styles.currencyDetails}>
+                  <Text style={styles.currencyCode}>{selectedCurrency.code}</Text>
+                  <Text style={styles.currencyName}>{selectedCurrency.name}</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-down" size={20} color={colors.secondaryText} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Required Fields Note */}
@@ -409,6 +481,52 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Currency Selection Modal */}
+      <Modal
+        visible={showCurrencyModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCurrencyModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Currency</Text>
+              <TouchableOpacity onPress={() => setShowCurrencyModal(false)}>
+                <Ionicons name="close" size={24} color={colors.primaryText} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={currencies}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.currencyItem,
+                    item.code === formData.preferredCurrency && styles.currencyItemSelected
+                  ]}
+                  onPress={() => {
+                    handleInputChange('preferredCurrency', item.code);
+                    setShowCurrencyModal(false);
+                  }}
+                >
+                  <View style={styles.currencyItemContent}>
+                    <Text style={styles.currencyItemSymbol}>{item.symbol}</Text>
+                    <View style={styles.currencyItemDetails}>
+                      <Text style={styles.currencyItemCode}>{item.code}</Text>
+                      <Text style={styles.currencyItemName}>{item.name}</Text>
+                    </View>
+                  </View>
+                  {item.code === formData.preferredCurrency && (
+                    <Ionicons name="checkmark" size={24} color={colors.primaryButton} />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -612,6 +730,104 @@ const createStyles = (colors: ReturnType<typeof useTheme>['colors']) => StyleShe
     fontSize: 12,
     color: colors.secondaryText,
     lineHeight: 16,
+  },
+  // Currency selector styles
+  currencySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.inputBackground,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: colors.secondaryText,
+  },
+  currencyInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  currencySymbol: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.primaryText,
+    marginRight: 12,
+    width: 30,
+    textAlign: 'center',
+  },
+  currencyDetails: {
+    flexDirection: 'column',
+  },
+  currencyCode: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.primaryText,
+  },
+  currencyName: {
+    fontSize: 12,
+    color: colors.secondaryText,
+  },
+  // Modal styles
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: colors.cardBackground,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.secondaryText,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.primaryText,
+  },
+  currencyItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.inputBackground,
+  },
+  currencyItemSelected: {
+    backgroundColor: colors.inputBackground,
+  },
+  currencyItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  currencyItemSymbol: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.primaryText,
+    marginRight: 12,
+    width: 30,
+    textAlign: 'center',
+  },
+  currencyItemDetails: {
+    flexDirection: 'column',
+  },
+  currencyItemCode: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.primaryText,
+  },
+  currencyItemName: {
+    fontSize: 12,
+    color: colors.secondaryText,
   },
 });
 

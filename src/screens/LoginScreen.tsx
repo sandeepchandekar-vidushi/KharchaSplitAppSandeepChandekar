@@ -39,6 +39,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
     setLoading(true);
     try {
+      // Test bypass for development - skip WATI for test number
+      if (cleanedNumber === '9822192700') {
+        console.log('Test number detected - bypassing WATI OTP');
+        await PhoneStorage.saveLastPhoneNumber(cleanedNumber);
+        Alert.alert('Test Mode', 'Use OTP: 123456');
+        navigation.navigate('OTPVerification', { phoneNumber: cleanedNumber });
+        return;
+      }
+
+      // Normal flow - send OTP via WATI
       await authService.sendOTP(cleanedNumber);
       // Save the number after successful OTP send
       await PhoneStorage.saveLastPhoneNumber(cleanedNumber);

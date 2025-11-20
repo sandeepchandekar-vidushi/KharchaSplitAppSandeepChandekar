@@ -24,6 +24,7 @@ import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityScreenSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { activityApi } from '../services/api/activityApi';
 
 interface ActivityScreenProps {
   navigation: any;
@@ -64,38 +65,72 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     try {
       // Show skeleton loader for minimum duration (for better UX)
       const minLoadingTime = new Promise<void>(resolve => setTimeout(() => resolve(), 1000));
-      
-      // Get user's groups first to get group activities
-      const dataPromise = (async () => {
-        const userGroups = await firebaseService.getUserGroups(user.id);
-        const groupIds = userGroups.map(group => group.id);
-        
-        // Get both user activities and group activities
-        const [userActivities, groupActivities] = await Promise.all([
-          firebaseService.getUserActivities(user.id, 30),
-          firebaseService.getGroupActivities(groupIds, 20)
-        ]);
 
-        // Combine and deduplicate activities
-        const allActivities = [...userActivities, ...groupActivities];
-        const uniqueActivities = allActivities.filter((activity, index, self) => 
-          index === self.findIndex(a => a.id === activity.id)
-        );
+      // Get activities from API or Firebase
+      const dataPromise = (async () => {
+        let loadedActivities: Activity[] = [];
+
+        // Try PostgreSQL backend first
+        try {
+          console.log('Loading activities from PostgreSQL backend...');
+          const response = await activityApi.getUserActivities(user.id, 1, 50);
+
+          if (response.success) {
+            // Map API response to Activity format
+            loadedActivities = response.data.map(act => ({
+              id: act.id,
+              userId: act.userId,
+              userName: '',
+              type: act.activityType as Activity['type'],
+              title: act.title,
+              description: act.description,
+              groupId: act.groupId,
+              groupName: act.metadata?.groupName,
+              expenseId: act.metadata?.expenseId,
+              expenseDescription: act.metadata?.expenseDescription,
+              amount: act.metadata?.amount,
+              relatedUserId: act.metadata?.relatedUserId,
+              relatedUserName: act.metadata?.relatedUserName,
+              createdAt: act.createdAt,
+              metadata: act.metadata,
+            }));
+            console.log(`Loaded ${loadedActivities.length} activities from PostgreSQL`);
+          }
+        } catch (backendError: any) {
+          console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+          // Fallback to Firebase
+          const userGroups = await firebaseService.getUserGroups(user.id);
+          const groupIds = userGroups.map(group => group.id);
+
+          // Get both user activities and group activities
+          const [userActivities, groupActivities] = await Promise.all([
+            firebaseService.getUserActivities(user.id, 30),
+            firebaseService.getGroupActivities(groupIds, 20)
+          ]);
+
+          // Combine and deduplicate activities
+          const allActivities = [...userActivities, ...groupActivities];
+          loadedActivities = allActivities.filter((activity, index, self) =>
+            index === self.findIndex(a => a.id === activity.id)
+          );
+          console.log(`Loaded ${loadedActivities.length} activities from Firebase`);
+        }
 
         // Sort by creation time (most recent first)
-        uniqueActivities.sort((a, b) => {
+        loadedActivities.sort((a, b) => {
           const aTime = new Date(a.createdAt).getTime();
           const bTime = new Date(b.createdAt).getTime();
           return bTime - aTime;
         });
 
         // Limit to 50 most recent
-        return uniqueActivities.slice(0, 50);
+        return loadedActivities.slice(0, 50);
       })();
-      
+
       // Wait for both data loading and minimum loading time
       const [limitedActivities] = await Promise.all([dataPromise, minLoadingTime]);
-      
+
       setActivities(limitedActivities);
     } catch (error) {
       Alert.alert('Error', 'Failed to load recent activities. Please try again.');
@@ -254,8 +289,16 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
                 Vibration.vibrate(100);
               }
 
-              // Delete from Firebase
-              await firebaseService.deleteActivity(activity.id!);
+              // Try PostgreSQL backend first, fallback to Firebase
+              try {
+                console.log('Deleting activity from PostgreSQL backend...');
+                await activityApi.deleteActivity(activity.id!);
+                console.log('Activity deleted successfully from PostgreSQL');
+              } catch (backendError: any) {
+                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+                await firebaseService.deleteActivity(activity.id!);
+                console.log('Activity deleted successfully from Firebase');
+              }
               
               // Animate out with fade effect
               const activityElement = activities.find(a => a.id === activity.id);

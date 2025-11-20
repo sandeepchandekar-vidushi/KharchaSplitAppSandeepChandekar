@@ -21,6 +21,7 @@ import { CreateNewGroupScreen } from './CreateNewGroupScreen';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { firebaseService } from '../services/firebaseService';
+import { groupApi } from '../services/api/groupApi';
 // --- RESPONSIVE ---
 // We now use this object to create scaled sizes
 import { typography } from '../utils/typography';
@@ -466,7 +467,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await firebaseService.deleteGroup(groupId);
+              // Try PostgreSQL backend first
+              try {
+                console.log('Deleting group from PostgreSQL backend...');
+                const response = await groupApi.deleteGroup(groupId);
+
+                if (response.success) {
+                  console.log('Group deleted successfully from PostgreSQL');
+                }
+              } catch (backendError: any) {
+                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+                // Fallback to Firebase
+                await firebaseService.deleteGroup(groupId);
+                console.log('Group deleted successfully from Firebase');
+              }
 
               // Remove from local state
               setGroups(prev => prev.filter(g => g.id !== groupId));

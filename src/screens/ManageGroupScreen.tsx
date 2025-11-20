@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { firebaseService, Group as FirebaseGroup, GroupMember } from '../services/firebaseService';
 import { useAuth } from '../context/AuthContext';
 import { ensureDataUri } from '../utils/imageUtils';
+import { groupApi } from '../services/api/groupApi';
 
 // Types
 interface Member {
@@ -258,8 +259,8 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
       // Handle cover image
       if (groupData.coverImage) {
         // Extract base64 data from data URI if needed
-        const base64Data = groupData.coverImage.startsWith('data:') 
-          ? groupData.coverImage.split(',')[1] 
+        const base64Data = groupData.coverImage.startsWith('data:')
+          ? groupData.coverImage.split(',')[1]
           : groupData.coverImage;
         updateData.coverImageBase64 = base64Data;
       } else {
@@ -267,9 +268,21 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
         updateData.coverImageBase64 = null;
       }
 
+      // Try PostgreSQL backend first
+      try {
+        console.log('Updating group in PostgreSQL backend...');
+        const response = await groupApi.updateGroup(group.id, updateData);
 
-      // Update group in Firebase
-      await firebaseService.updateGroup(group.id, updateData);
+        if (response.success) {
+          console.log('Group updated successfully in PostgreSQL');
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        await firebaseService.updateGroup(group.id, updateData);
+        console.log('Group updated successfully in Firebase');
+      }
 
       // Clear base64 image from memory after successful upload
       if (groupData.coverImage?.startsWith('data:')) {

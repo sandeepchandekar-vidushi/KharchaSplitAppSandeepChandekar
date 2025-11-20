@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 // --- RESPONSIVE ---
 import { typography } from '../utils/typography'; // Assuming path is correct
 import { firebaseService } from '../services/firebaseService';
+import { userApi } from '../services/api/userApi';
 
 type DeleteAccountProps = {
   onClose: () => void;
@@ -179,19 +180,29 @@ export const DeleteAccount: React.FC<DeleteAccountProps> = ({ onClose }) => {
     }
 
     setIsDeleting(true);
-    
+
     try {
-      // Call Firebase service to deactivate account
-      await firebaseService.deactivateUserAccount(user.id);
-      
+      // Try PostgreSQL backend first
+      try {
+        console.log('Deleting user account via PostgreSQL backend...');
+        await userApi.deleteUser(user.id);
+        console.log('User account deleted successfully via PostgreSQL');
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase deactivation
+        await firebaseService.deactivateUserAccount(user.id);
+        console.log('User account deactivated successfully via Firebase');
+      }
+
       setShowConfirmModal(false);
-      
+
       Alert.alert(
-        '✅ Account Deactivated', 
+        'Account Deactivated',
         'Your account has been successfully deactivated. You have been logged out and cannot access the app anymore.\n\nNote: Your historical data is preserved for security and group transaction integrity.',
         [
-          { 
-            text: 'OK', 
+          {
+            text: 'OK',
             onPress: async () => {
               try {
                 await logout();
@@ -205,9 +216,9 @@ export const DeleteAccount: React.FC<DeleteAccountProps> = ({ onClose }) => {
       );
     } catch (error: any) {
       setIsDeleting(false);
-      
+
       Alert.alert(
-        '❌ Error', 
+        'Error',
         error.message || 'Failed to delete account. Please try again or contact support.',
         [
           { text: 'OK', style: 'default' }

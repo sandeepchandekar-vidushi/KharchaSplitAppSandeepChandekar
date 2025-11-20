@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, ActivityIndicator, BackHandler, Alert } from 'react-native';
+import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { BiometricProvider, useBiometric } from './src/context/BiometricContext';
+import { NetworkProvider, useNetwork } from './src/context/NetworkContext';
 import { AuthenticatedNavigator } from './src/navigation/AuthenticatedNavigator';
 import { UnauthenticatedNavigator } from './src/navigation/AppNavigator';
 import { BiometricAuthScreen } from './src/screens/BiometricAuthScreen';
 import { SplashScreen } from './src/screens/SplashScreen';
 import { UpdatePromptModal } from './src/components/UpdatePromptModal';
+import { NoInternetModal } from './src/components/NoInternetModal';
 import messaging from '@react-native-firebase/messaging';
 import { FCMService } from './src/services/FCMService';
 import versionCheckService, { UpdateCheckResult } from './src/services/versionCheckService';
@@ -18,9 +20,62 @@ const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, user } = useAuth();
   const { isBiometricLocked, setBiometricLocked } = useBiometric();
   const { colors } = useTheme();
+  const { isConnected, isInternetReachable } = useNetwork();
   const [showSplash, setShowSplash] = useState(true);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [showNoInternet, setShowNoInternet] = useState(false);
+
+  // Navigation ref for back button handling
+  const navigationRef = useRef<NavigationContainerRef<any>>(null);
+
+  // Handle hardware back button
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Don't handle back during splash or loading
+      if (showSplash || isLoading) {
+        return true;
+      }
+
+      // Check if we can go back in navigation
+      if (navigationRef.current?.canGoBack()) {
+        navigationRef.current.goBack();
+        return true;
+      }
+
+      // At root - show exit confirmation
+      Alert.alert(
+        'Exit App',
+        'Are you sure you want to exit KharchaSplit?',
+        [
+          {
+            text: 'Cancel',
+            onPress: () => null,
+            style: 'cancel',
+          },
+          {
+            text: 'Exit',
+            onPress: () => BackHandler.exitApp(),
+            style: 'destructive',
+          },
+        ],
+        { cancelable: true }
+      );
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, [showSplash, isLoading]);
+
+  // Monitor network connectivity
+  useEffect(() => {
+    // Show no internet modal when disconnected (after splash screen)
+    if (!showSplash && (!isConnected || isInternetReachable === false)) {
+      setShowNoInternet(true);
+    } else {
+      setShowNoInternet(false);
+    }
+  }, [isConnected, isInternetReachable, showSplash]);
 
   // Check for app updates
   useEffect(() => {
@@ -114,7 +169,7 @@ const AppContent: React.FC = () => {
 
   return (
     <>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         {isAuthenticated ? <AuthenticatedNavigator /> : <UnauthenticatedNavigator />}
       </NavigationContainer>
 
@@ -130,6 +185,12 @@ const AppContent: React.FC = () => {
           onLater={updateInfo.forceUpdate ? undefined : handleLater}
         />
       )}
+
+      {/* No Internet Connection Modal */}
+      <NoInternetModal
+        visible={showNoInternet}
+        onRetry={() => setShowNoInternet(false)}
+      />
     </>
   );
 };
@@ -138,11 +199,13 @@ const App: React.FC = () => {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <BiometricProvider>
-            <AppContent />
-          </BiometricProvider>
-        </AuthProvider>
+        <NetworkProvider>
+          <AuthProvider>
+            <BiometricProvider>
+              <AppContent />
+            </BiometricProvider>
+          </AuthProvider>
+        </NetworkProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

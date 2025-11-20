@@ -16,6 +16,8 @@ import {
 import { launchImageLibrary, launchCamera, ImagePickerResponse, MediaType } from 'react-native-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { authApi } from '../services/api/authApi';
+import { tokenStorage } from '../services/tokenStorage';
 import { NotificationPermissionHelper } from '../utils/NotificationPermissionHelper';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
 
@@ -73,7 +75,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
   };
 
   // Ref to store debounce timer for cleanup
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cleanup debounce timer on unmount
   useEffect(() => {
@@ -128,58 +130,132 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
 
     setLoading(true);
     try {
-      const { firebaseService } = await import('../services/firebaseService');
-      const { userStorage } = await import('../services/userStorage');
-      
-      // Prepare user data, only including defined values
-      const userData: any = {
-        phoneNumber,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        name: `${firstName.trim()} ${lastName.trim()}`, // Combined name for compatibility
-      };
+      const fullName = `${firstName.trim()} ${lastName.trim()}`;
+      const profileImageBase64 = profileImage ? profileImage.replace(/^data:image\/[a-z]+;base64,/, '') : undefined;
 
-      // Only add email if it has a value
-      if (email.trim()) {
-        userData.email = email.trim();
-      }
+      // Step 1: Register user with PostgreSQL backend
+      try {
+        const registerResponse = await authApi.register({
+          phoneNumber,
+          name: fullName,
+          email: email.trim() || undefined,
+          profileImageBase64,
+        });
 
-      // Only add profileImage if it exists (base64 format)
-      if (profileImage) {
-        userData.profileImage = profileImage.replace(/^data:image\/[a-z]+;base64,/, ''); // Remove data URL prefix if present
-      }
+        console.log('User registered in PostgreSQL backend:', registerResponse);
 
-      const userProfile = await firebaseService.createUser(userData);
+        // Step 2: After registration, login to get JWT tokens using simpleLogin
+        // This doesn't require OTP since user just completed registration
+        const loginResponse = await authApi.simpleLogin(phoneNumber);
 
-      // Apply referral code if provided and valid
-      if (referralCode.trim() && referralValid === true) {
-        try {
-          const applied = await firebaseService.applyReferralCode(userProfile.id, referralCode.trim());
-          if (applied) {
-            Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
+        if (loginResponse.success && loginResponse.data) {
+          const { user, accessToken, refreshToken } = loginResponse.data;
+
+          // Save JWT tokens
+          await tokenStorage.saveAuthData(accessToken, refreshToken, user.id);
+
+          // Save user profile locally
+          const { userStorage } = await import('../services/userStorage');
+          await userStorage.saveUser({
+            id: user.id,
+            phoneNumber: user.phoneNumber.replace('+91', ''),
+            name: user.name,
+            email: user.email || '',
+            profileImage: user.profileImageBase64 || '',
+            createdAt: user.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isActive: true,
+          });
+
+          // Apply referral code if provided and valid (still using Firebase for this feature)
+          if (referralCode.trim() && referralValid === true) {
+            try {
+              const { firebaseService } = await import('../services/firebaseService');
+              const applied = await firebaseService.applyReferralCode(user.id, referralCode.trim());
+              if (applied) {
+                Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
+              } else {
+                Alert.alert('Success', 'Profile created successfully! However, the referral code could not be applied.');
+              }
+            } catch (referralError) {
+              console.error('Error applying referral code:', referralError);
+              Alert.alert('Success', 'Profile created successfully! However, there was an issue applying the referral code.');
+            }
           } else {
-            Alert.alert('Success', 'Profile created successfully! However, the referral code could not be applied.');
+            Alert.alert('Success', 'Profile created successfully!');
           }
-        } catch (referralError) {
-          console.error('Error applying referral code:', referralError);
-          Alert.alert('Success', 'Profile created successfully! However, there was an issue applying the referral code.');
+
+          // Login with AuthContext
+          login({
+            id: user.id,
+            phoneNumber: user.phoneNumber.replace('+91', ''),
+            name: user.name,
+            email: user.email || '',
+            profileImage: user.profileImageBase64 || '',
+            createdAt: user.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isActive: true,
+          });
+
+          // Request notification permission
+          setTimeout(async () => {
+            await NotificationPermissionHelper.requestPermissionIfNeeded();
+          }, 1000);
         }
-      } else {
-        Alert.alert('Success', 'Profile created successfully!');
+      } catch (backendError: any) {
+        // Firebase fallback commented out for local testing
+        console.error('Backend registration error:', backendError);
+        throw backendError; // Re-throw to be caught by outer catch block
+
+        /* FIREBASE FALLBACK - COMMENTED OUT FOR LOCAL TESTING
+        console.log('Falling back to Firebase registration...');
+
+        const { firebaseService } = await import('../services/firebaseService');
+        const { userStorage } = await import('../services/userStorage');
+
+        const userData: any = {
+          phoneNumber,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          name: fullName,
+        };
+
+        if (email.trim()) {
+          userData.email = email.trim();
+        }
+
+        if (profileImageBase64) {
+          userData.profileImage = profileImageBase64;
+        }
+
+        const userProfile = await firebaseService.createUser(userData);
+
+        // Apply referral code if provided
+        if (referralCode.trim() && referralValid === true) {
+          try {
+            const applied = await firebaseService.applyReferralCode(userProfile.id, referralCode.trim());
+            if (applied) {
+              Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
+            } else {
+              Alert.alert('Success', 'Profile created successfully! However, the referral code could not be applied.');
+            }
+          } catch (referralError) {
+            console.error('Error applying referral code:', referralError);
+            Alert.alert('Success', 'Profile created successfully! However, there was an issue applying the referral code.');
+          }
+        } else {
+          Alert.alert('Success', 'Profile created successfully!');
+        }
+
+        await userStorage.saveUser(userProfile);
+        await userStorage.saveAuthToken(userProfile.id);
+        login(userProfile);
+
+        setTimeout(async () => {
+          await NotificationPermissionHelper.requestPermissionIfNeeded();
+        }, 1000);
+        */
       }
-
-      // Save user data locally for quick access
-      await userStorage.saveUser(userProfile);
-      await userStorage.saveAuthToken(userProfile.id);
-
-      // Update auth context to trigger navigation to main app
-      login(userProfile);
-      
-      // Request notification permission after successful profile creation
-      setTimeout(async () => {
-        const result = await NotificationPermissionHelper.requestPermissionIfNeeded();
-        // No UI needed, just request the permission
-      }, 1000); // Small delay to ensure smooth navigation
     } catch (error) {
       Alert.alert('Error', 'Failed to create profile. Please try again.');
       console.error('Save profile error:', error);

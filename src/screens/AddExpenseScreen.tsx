@@ -127,6 +127,13 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
     { code: "INR", symbol: "₹", name: "Indian Rupee" },
     { code: "USD", symbol: "$", name: "US Dollar" },
     { code: "EUR", symbol: "€", name: "Euro" },
+    { code: "GBP", symbol: "£", name: "British Pound" },
+    { code: "AUD", symbol: "A$", name: "Australian Dollar" },
+    { code: "CAD", symbol: "C$", name: "Canadian Dollar" },
+    { code: "SGD", symbol: "S$", name: "Singapore Dollar" },
+    { code: "AED", symbol: "د.إ", name: "UAE Dirham" },
+    { code: "JPY", symbol: "¥", name: "Japanese Yen" },
+    { code: "CNY", symbol: "¥", name: "Chinese Yuan" },
   ];
   
   const splitTypes = ["Equal", "Unequal", "By Percentage", "By Share"];
@@ -150,6 +157,16 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
       setReceiptSize(0);
     };
   }, [group]);
+
+  // Set default currency from user's preferred currency
+  useEffect(() => {
+    if (user?.preferredCurrency) {
+      const userCurrency = currencies.find(c => c.code === user.preferredCurrency);
+      if (userCurrency) {
+        setSelectedCurrency({ code: userCurrency.code, symbol: userCurrency.symbol });
+      }
+    }
+  }, [user?.preferredCurrency]);
 
   const loadGroupMembers = async () => {
     if (!group?.id) return;

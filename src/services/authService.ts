@@ -59,13 +59,25 @@ export const authService = {
       );
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        console.error('WATI API Error Response:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText,
+          phoneNumber: phoneNumber,
+        });
+        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
       }
 
       const result: OTPResponse = await response.json();
 
       // Store OTP locally for verification (in production, this should be server-side)
       await this.storeOTP(phoneNumber, otp);
+
+      console.log('OTP sent successfully via WATI:', {
+        phoneNumber: phoneNumber,
+        otp: otp, // Only log in dev
+      });
 
       return result;
     } catch (error) {

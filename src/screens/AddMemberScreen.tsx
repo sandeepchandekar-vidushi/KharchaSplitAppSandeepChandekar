@@ -22,6 +22,8 @@ import { Share } from 'react-native';
 import { s, vs, ms } from '../utils/deviceDimensions';
 import { contactsCacheService } from '../services/contactsCacheService';
 import { formatPhoneForDisplay } from '../utils/phoneFormatter';
+import { inviteApi } from '../services/api/inviteApi';
+import { userApi } from '../services/api/userApi';
 
 interface Group {
   id: string;
@@ -31,6 +33,8 @@ interface Group {
 interface Contact {
   recordID: string;
   displayName: string;
+  givenName?: string;
+  familyName?: string;
   phoneNumbers: { number: string }[];
   emailAddresses: { email: string }[];
   thumbnailPath?: string;
@@ -56,6 +60,9 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
   const [filteredContacts, setFilteredContacts] = useState<FilteredContact[]>([]);
   const [displayedContacts, setDisplayedContacts] = useState<FilteredContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [phoneSearchResult, setPhoneSearchResult] = useState<FilteredContact | null>(null);
+  const [phoneSearchLoading, setPhoneSearchLoading] = useState(false);
   const [hasContactsPermission, setHasContactsPermission] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -180,7 +187,11 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       const contactsList = await Contacts.getAll();
       const mappedContacts: Contact[] = contactsList.map(contact => ({
         recordID: contact.recordID,
-        displayName: contact.displayName || contact.givenName || 'Unknown',
+        displayName: contact.displayName ||
+                     `${contact.givenName || ''} ${contact.familyName || ''}`.trim() ||
+                     'Unknown',
+        givenName: contact.givenName,
+        familyName: contact.familyName,
         phoneNumbers: (contact.phoneNumbers || []).map(phone => ({ number: phone.number })),
         emailAddresses: (contact.emailAddresses || []).map(email => ({ email: email.email })),
         thumbnailPath: contact.thumbnailPath,
@@ -191,6 +202,134 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       Alert.alert('Error', 'Failed to load contacts');
     } finally {
       setContactsLoading(false);
+    }
+  };
+
+  const handleRefreshContacts = async () => {
+    if (refreshing || contactsLoading) return;
+
+    try {
+      setRefreshing(true);
+
+      // Clear cache to force fresh Firebase lookup
+      await contactsCacheService.clear();
+      console.log('[AddMember] Cache cleared for refresh - forcing fresh Firebase lookup');
+
+      // Reset pagination
+      hasLoadedContacts.current = false;
+
+      // Reload contacts
+      await loadContacts();
+    } catch (error) {
+      console.error('[AddMember] Error refreshing contacts:', error);
+      Alert.alert('Error', 'Failed to refresh contacts. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  /**
+   * Search for user by phone number
+   * Triggers when exactly 10 digits are entered
+   */
+  const searchByPhoneNumber = async (phoneNumber: string) => {
+    try {
+      setPhoneSearchLoading(true);
+      setPhoneSearchResult(null);
+
+      // Format phone number to +91XXXXXXXXXX
+      const formattedPhone = `+91${phoneNumber}`;
+      console.log('[AddMember] Searching for phone number:', formattedPhone);
+
+      // Check with backend
+      const response = await userApi.checkRegisteredUsers([formattedPhone]);
+
+      if (response.success && response.data.registered.length > 0) {
+        const registeredUser = response.data.registered[0];
+
+        // Check if user is already in contacts list
+        const existingContact = filteredContacts.find(c => {
+          const contactPhone = normalizePhoneNumber(c.phoneNumbers[0].number);
+          return contactPhone === phoneNumber;
+        });
+
+        if (existingContact) {
+          console.log('[AddMember] User already in contacts list');
+          setPhoneSearchResult(null);
+          return;
+        }
+
+        // Check if user is current user
+        const currentUserPhone = user?.phoneNumber ? normalizePhoneNumber(user.phoneNumber) : null;
+        if (currentUserPhone === phoneNumber) {
+          console.log('[AddMember] Cannot add yourself');
+          setPhoneSearchResult(null);
+          return;
+        }
+
+        // Check if user is already in the group
+        const currentGroup = await firebaseService.getGroupById(group.id);
+        if (currentGroup) {
+          const existingMember = currentGroup.members.find(m =>
+            normalizePhoneNumber(m.phoneNumber) === phoneNumber
+          );
+          if (existingMember) {
+            console.log('[AddMember] User already in group');
+            setPhoneSearchResult(null);
+            return;
+          }
+        }
+
+        // Create a contact object from the registered user
+        const nameParts = registeredUser.name.split(' ');
+        const searchedContact: FilteredContact = {
+          recordID: `phone-search-${registeredUser.userId}`,
+          displayName: registeredUser.name,
+          givenName: nameParts[0] || registeredUser.name,
+          familyName: nameParts.slice(1).join(' '),
+          phoneNumbers: [{ number: formattedPhone }],
+          emailAddresses: registeredUser.email ? [{ email: registeredUser.email }] : [],
+          thumbnailPath: registeredUser.profileImage,
+          isRegistered: true,
+          userProfile: {
+            id: registeredUser.userId,
+            name: registeredUser.name,
+            phoneNumber: formattedPhone,
+            email: registeredUser.email,
+            profileImage: registeredUser.profileImage,
+          },
+        };
+
+        console.log('[AddMember] Found registered user:', registeredUser.name);
+        setPhoneSearchResult(searchedContact);
+      } else {
+        console.log('[AddMember] No registered user found for:', formattedPhone);
+        setPhoneSearchResult(null);
+      }
+    } catch (error) {
+      console.error('[AddMember] Error searching by phone:', error);
+      setPhoneSearchResult(null);
+    } finally {
+      setPhoneSearchLoading(false);
+    }
+  };
+
+  /**
+   * Handle search query change
+   * Detect when 10 digits are entered and trigger phone search
+   */
+  const handleSearchQueryChange = (query: string) => {
+    setSearchQuery(query);
+
+    // Extract only digits from the query
+    const digits = query.replace(/\D/g, '');
+
+    // If exactly 10 digits, trigger phone search
+    if (digits.length === 10) {
+      searchByPhoneNumber(digits);
+    } else {
+      // Clear phone search result if not 10 digits
+      setPhoneSearchResult(null);
     }
   };
 
@@ -284,23 +423,24 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         let registeredUsers = await firebaseService.getUsersByPhoneNumbers(uncachedPhones);
         console.log('[AddMember] Found', registeredUsers.length, 'registered users with +91 format');
 
-        // If no results, try without +91 (just 10 digits)
-        if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-          console.log('[AddMember] Trying 10-digit format without +91...');
-          const phonesWithout91 = uncachedPhones.map(p => p.replace('+91', ''));
-          console.log('[AddMember] Sample 10-digit phones:', phonesWithout91.slice(0, 5));
-          registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWithout91);
-          console.log('[AddMember] Found', registeredUsers.length, 'registered users with 10-digit format');
-        }
+        // COMMENTED OUT: Phone format fallbacks - Backend should standardize phone format
+        // // If no results, try without +91 (just 10 digits)
+        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
+        //   console.log('[AddMember] Trying 10-digit format without +91...');
+        //   const phonesWithout91 = uncachedPhones.map(p => p.replace('+91', ''));
+        //   console.log('[AddMember] Sample 10-digit phones:', phonesWithout91.slice(0, 5));
+        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWithout91);
+        //   console.log('[AddMember] Found', registeredUsers.length, 'registered users with 10-digit format');
+        // }
 
-        // If still no results, try with 91 prefix (no +)
-        if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-          console.log('[AddMember] Trying 91XXXXXXXXXX format (no +)...');
-          const phonesWith91NoPlus = uncachedPhones.map(p => p.replace('+', ''));
-          console.log('[AddMember] Sample 91XXXXXXXXXX phones:', phonesWith91NoPlus.slice(0, 5));
-          registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWith91NoPlus);
-          console.log('[AddMember] Found', registeredUsers.length, 'registered users with 91XXXXXXXXXX format');
-        }
+        // // If still no results, try with 91 prefix (no +)
+        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
+        //   console.log('[AddMember] Trying 91XXXXXXXXXX format (no +)...');
+        //   const phonesWith91NoPlus = uncachedPhones.map(p => p.replace('+', ''));
+        //   console.log('[AddMember] Sample 91XXXXXXXXXX phones:', phonesWith91NoPlus.slice(0, 5));
+        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWith91NoPlus);
+        //   console.log('[AddMember] Found', registeredUsers.length, 'registered users with 91XXXXXXXXXX format');
+        // }
 
         if (registeredUsers.length > 0) {
           console.log('[AddMember] Sample registered:', registeredUsers.slice(0, 3).map(u => ({ phone: u.phoneNumber, name: u.name })));
@@ -353,11 +493,28 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         console.log('[AddMember] Updated', updatedCount, 'contacts with registration status');
       }
 
-      // Filter out current user
+      // Filter out current user - check both userProfile (from Firebase) and cached data
+      const currentUserPhone = user?.phoneNumber ? normalizePhoneNumber(user.phoneNumber) : null;
       const finalContacts = validContacts.filter(contact => {
         const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
+
+        // Check if this is the current user's phone number
+        if (currentUserPhone && primaryPhone === currentUserPhone) {
+          return false;
+        }
+
+        // Check if userProfile matches current user
+        if (contact.userProfile?.id === user?.id) {
+          return false;
+        }
+
+        // Check cached data
         const cached = contactsCacheService.get(primaryPhone);
-        return !cached?.userProfile || cached.userProfile.id !== user?.id;
+        if (cached?.userProfile?.id === user?.id) {
+          return false;
+        }
+
+        return true;
       });
 
       // Sort: registered first
@@ -426,22 +583,50 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
     }
   }, [selectedMembers]);
 
-  const handleInviteContact = async (_contact: FilteredContact) => {
+  const handleInviteContact = async (contact: FilteredContact) => {
     try {
-      if (!user?.referralCode) {
-        Alert.alert('Error', 'Unable to send invite. Please try again later.');
+      const contactName = contact.displayName || 'Friend';
+      const phoneNumber = contact.phoneNumbers?.[0]?.number;
+
+      if (!phoneNumber) {
+        Alert.alert('Error', 'No phone number found for this contact.');
         return;
       }
 
-      const message = `Hi! Join me on KharchaSplit to easily split expenses and manage group payments. Use my referral code: ${user.referralCode}\n\nDownload the app: [App Store/Play Store Link]`;
+      // Normalize phone number
+      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+      const formattedPhone = `+91${normalizedPhone}`;
 
-      await Share.share({
-        message,
-        title: 'Join KharchaSplit',
+      // Create invite in backend
+      const inviteResponse = await inviteApi.createInvite({
+        phoneNumbers: [formattedPhone],
+        context: {
+          groupId: group?.id,
+          groupName: group?.name,
+          message: `Invited to join group: ${group?.name}`,
+        },
       });
-    } catch (error) {
-      console.error('Error sharing invite:', error);
-      Alert.alert('Error', 'Failed to send invite. Please try again.');
+
+      if (inviteResponse.success && inviteResponse.data.invites.length > 0) {
+        const invite = inviteResponse.data.invites[0];
+
+        // Use the invite message from backend or create default
+        const inviteMessage = invite.shareMessage ||
+          `Hi ${contactName}! 👋\n\nI'm using KharchaSplit to split expenses with friends and family. It's super easy to track shared costs and settle payments!\n\n🎁 Join using my referral code: ${user?.referralCode || user?.id || 'KHARCHASPLIT'}\n\nDownload KharchaSplit now:\n📱 Android: https://play.google.com/store/apps/details?id=com.kharchasplit\n🍎 iOS: https://apps.apple.com/app/kharchasplit\n\nLet's split smarter together! 💰`;
+
+        // Share the invitation
+        await Share.share({
+          message: inviteMessage,
+          title: 'Join KharchaSplit',
+        });
+
+        console.log('[AddMember] Invite created and shared:', invite.inviteCode);
+      } else {
+        throw new Error('Failed to create invite');
+      }
+    } catch (error: any) {
+      console.error('[AddMember] Error sharing invite:', error);
+      Alert.alert('Error', error.message || 'Failed to send invite. Please try again.');
     }
   };
 
@@ -591,11 +776,52 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
     if (searchQuery.trim()) {
       // When searching, show all matching results (no pagination)
       const filtered = filteredContacts.filter(contact => {
-        const name = (contact.userProfile?.name || contact.displayName).toLowerCase();
+        const query = searchQuery.toLowerCase().trim();
+
+        // Search by display name
+        const displayName = (contact.userProfile?.name || contact.displayName || '').toLowerCase();
+        if (displayName.includes(query)) {
+          return true;
+        }
+
+        // Search by given name
+        if (contact.givenName?.toLowerCase().includes(query)) {
+          return true;
+        }
+
+        // Search by family name
+        if (contact.familyName?.toLowerCase().includes(query)) {
+          return true;
+        }
+
+        // Search by phone number (digits only for better matching)
         const phone = contact.phoneNumbers?.[0]?.number || '';
-        const query = searchQuery.toLowerCase();
-        return name.includes(query) || phone.includes(query);
+        const phoneDigits = phone.replace(/\D/g, '');
+        const queryDigits = searchQuery.replace(/\D/g, '');
+        if (queryDigits && phoneDigits.includes(queryDigits)) {
+          return true;
+        }
+
+        // Also try matching formatted phone
+        if (phone.includes(query)) {
+          return true;
+        }
+
+        return false;
       });
+
+      // If phone search result exists and has 10 digits, add it to the top
+      if (phoneSearchResult && searchQuery.replace(/\D/g, '').length === 10) {
+        // Check if already in filtered list
+        const alreadyExists = filtered.some(c => c.recordID === phoneSearchResult.recordID);
+        if (!alreadyExists) {
+          console.log('[AddMember] Adding phone search result to top');
+          setDisplayedContacts([phoneSearchResult, ...filtered]);
+          setHasMore(false);
+          return;
+        }
+      }
+
       console.log('[AddMember] Search results:', filtered.length, 'of', filteredContacts.length);
       setDisplayedContacts(filtered);
       setHasMore(false);
@@ -603,7 +829,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       // When clearing search, reload first page
       loadMoreContacts(filteredContacts, 0);
     }
-  }, [searchQuery]);
+  }, [searchQuery, phoneSearchResult]);
 
   // Memoize the styles to prevent recreation on every render
   const flatListStyles = useMemo(() => styles(colors), [colors]);
@@ -618,7 +844,20 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
           <Ionicons name="arrow-back" size={24} color={colors.primaryText} />
         </TouchableOpacity>
         <Text style={styles(colors).headerTitle}>Add Members</Text>
-        <View style={styles(colors).placeholder} />
+        {hasContactsPermission && (
+          <TouchableOpacity
+            onPress={handleRefreshContacts}
+            disabled={refreshing || contactsLoading}
+            style={styles(colors).refreshButton}
+          >
+            <Ionicons
+              name="refresh"
+              size={24}
+              color={refreshing || contactsLoading ? colors.secondaryText : colors.primaryButton}
+            />
+          </TouchableOpacity>
+        )}
+        {!hasContactsPermission && <View style={styles(colors).placeholder} />}
       </View>
 
       <FlatList
@@ -637,10 +876,14 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
               <TextInput
                 style={styles(colors).searchInput}
                 value={searchQuery}
-                onChangeText={setSearchQuery}
+                onChangeText={handleSearchQueryChange}
                 placeholder="Search Person or Phone Number"
                 placeholderTextColor={colors.inputPlaceholder}
+                keyboardType="default"
               />
+              {phoneSearchLoading && (
+                <ActivityIndicator size="small" color={colors.primaryButton} style={{ marginLeft: 8 }} />
+              )}
             </View>
 
             {/* Loading State */}
@@ -670,6 +913,12 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
             });
           }
 
+          // Get initials from first and last name parts
+          const nameParts = displayName.trim().split(' ').filter(Boolean);
+          const initials = nameParts.length >= 2
+            ? `${nameParts[0].charAt(0)}${nameParts[nameParts.length - 1].charAt(0)}`.toUpperCase()
+            : displayName.charAt(0).toUpperCase() || '?';
+
           return (
             <View style={styles(colors).contactItem}>
               <View style={styles(colors).contactInfo}>
@@ -678,7 +927,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
                 ) : (
                   <View style={styles(colors).contactImagePlaceholder}>
                     <Text style={styles(colors).contactImagePlaceholderText}>
-                      {displayName.charAt(0).toUpperCase()}
+                      {initials}
                     </Text>
                   </View>
                 )}
@@ -805,6 +1054,10 @@ const styles = (colors: ReturnType<typeof useTheme>['colors']) =>
     },
     backButton: { padding: s(8) },
     headerTitle: { fontSize: ms(18), fontWeight: '600', color: colors.primaryText },
+    refreshButton: {
+      padding: s(8),
+      borderRadius: s(20),
+    },
     placeholder: { width: s(40) },
     scrollView: { flex: 1 },
     groupInfo: { padding: s(16), borderBottomWidth: s(1), borderBottomColor: colors.secondaryText },

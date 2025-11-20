@@ -1,21 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import responsiveScreen, {
-  wp,
-  hp,
-  s,
-  vs,
-  ms,
-  rf,
-  spacing,
-  borderRadius,
-  iconSizes,
-  commonSizes,
-  responsiveUtils
-} from '../utils/responsiveScreen';
+import responsiveScreen from '../utils/responsiveScreen';
+import { wp, s, vs, ms, spacing, borderRadius } from '../utils/deviceDimensions';
 import { typography } from '../utils/typography';
 import { getDeviceInfo } from '../utils/deviceDimensions';
+
+const { commonSizes, responsiveUtils } = responsiveScreen;
 
 export const ResponsiveExample: React.FC = () => {
   const { colors } = useTheme();

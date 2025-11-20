@@ -12,6 +12,8 @@ const darkColors = {
   inputPlaceholder: '#484F58',  // Muted placeholder text
   activeIcon: '#23C5A0',         // Mint green for active states
   inactiveIcon: '#7D8590',     // Muted gray for inactive states
+  border: '#30363D',            // Border color for dark mode
+  borderColor: '#30363D',       // Alias for border
   success: '#28A745',           // A clear, vibrant green
   error: '#DA3633',             // A clear, vibrant red
   warning: '#E3B341',           // A clear yellow/gold
@@ -35,6 +37,8 @@ const lightColors = {
   inputPlaceholder: '#6E7781',  // Muted placeholder
   activeIcon: '#23866E',         // Primary mint color
   inactiveIcon: '#57606A',     // Medium gray
+  border: '#D0D7DE',            // Border color for light mode
+  borderColor: '#D0D7DE',       // Alias for border
   success: '#1A7F37',           // A rich, accessible green
   error: '#CF222E',             // A strong, accessible red
   warning: '#BF8600',           // A clear, accessible yellow/brown

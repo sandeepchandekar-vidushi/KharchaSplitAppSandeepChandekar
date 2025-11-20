@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import { pickReceiptImage, formatFileSize, validateReceiptImage } from '../utils
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Ionicons from "react-native-vector-icons/Ionicons";
+import { personalExpenseApi } from '../services/api/personalExpenseApi';
 
 // Enable LayoutAnimation for Android
 if (
@@ -81,6 +82,7 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
   const [notes, setNotes] = useState("");
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [otherCategoryName, setOtherCategoryName] = useState("");
 
   const categories = [
@@ -97,7 +99,24 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
     { code: "INR", symbol: "₹", name: "Indian Rupee" },
     { code: "USD", symbol: "$", name: "US Dollar" },
     { code: "EUR", symbol: "€", name: "Euro" },
+    { code: "GBP", symbol: "£", name: "British Pound" },
+    { code: "AUD", symbol: "A$", name: "Australian Dollar" },
+    { code: "CAD", symbol: "C$", name: "Canadian Dollar" },
+    { code: "SGD", symbol: "S$", name: "Singapore Dollar" },
+    { code: "AED", symbol: "د.إ", name: "UAE Dirham" },
+    { code: "JPY", symbol: "¥", name: "Japanese Yen" },
+    { code: "CNY", symbol: "¥", name: "Chinese Yuan" },
   ];
+
+  // Set default currency from user's preferred currency
+  useEffect(() => {
+    if (user?.preferredCurrency) {
+      const userCurrency = currencies.find(c => c.code === user.preferredCurrency);
+      if (userCurrency) {
+        setSelectedCurrency({ code: userCurrency.code, symbol: userCurrency.symbol });
+      }
+    }
+  }, [user?.preferredCurrency]);
 
   const handleUploadReceipt = () => {
     PhotoLibraryPermissionHelper.handlePhotoLibraryPermission(
@@ -161,25 +180,48 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
     setLoading(true);
     try {
       const totalAmount = parseFloat(amount);
+      const categoryName = selectedCategory.name === 'Other' ? (otherCategoryName || 'Other') : selectedCategory.name;
 
-      const expense: Omit<PersonalExpense, 'id'> = {
-        userId: user.id,
-        description: description,
-        amount: totalAmount,
-        category: {
-          ...selectedCategory,
-          name: selectedCategory.name === 'Other' ? (otherCategoryName || 'Other') : selectedCategory.name,
-        },
-        ...(receiptImage?.startsWith('data:') && { receiptBase64: receiptImage }),
-        date: expenseDate.toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        isActive: true,
-        ...(notes.trim() && { notes: notes.trim() }),
-      };
+      // Try PostgreSQL backend first
+      try {
+        console.log('Creating personal expense in PostgreSQL backend...');
 
-      // Create expense in Firebase
-      await firebaseService.createPersonalExpense(expense);
+        const response = await personalExpenseApi.createPersonalExpense({
+          description: description.trim(),
+          amount: totalAmount,
+          currency: selectedCurrency.code,
+          category: categoryName,
+          receiptBase64: receiptImage?.startsWith('data:') ? receiptImage : undefined,
+          notes: notes.trim() || undefined,
+          expenseDate: expenseDate.toISOString(),
+        });
+
+        if (response.success) {
+          console.log('Personal expense created successfully in PostgreSQL:', response.data.id);
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        const expense: Omit<PersonalExpense, 'id'> = {
+          userId: user.id,
+          description: description,
+          amount: totalAmount,
+          category: {
+            ...selectedCategory,
+            name: categoryName,
+          },
+          ...(receiptImage?.startsWith('data:') && { receiptBase64: receiptImage }),
+          date: expenseDate.toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isActive: true,
+          ...(notes.trim() && { notes: notes.trim() }),
+        };
+
+        await firebaseService.createPersonalExpense(expense);
+        console.log('Personal expense created successfully in Firebase');
+      }
 
       Alert.alert("Success", "Personal expense saved successfully", [
         {
@@ -285,7 +327,13 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
               value={amount}
               onChangeText={setAmount}
             />
-            <Text style={styles.currencyCode}>{selectedCurrency.code}</Text>
+            <TouchableOpacity
+              style={styles.currencyButton}
+              onPress={() => setShowCurrencyModal(true)}
+            >
+              <Text style={styles.currencyCode}>{selectedCurrency.code}</Text>
+              <Ionicons name="chevron-down" size={scaledFontSize.sm} color={colors.secondaryText} />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -308,19 +356,58 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
           </TouchableOpacity>
         </View>
 
-        {showDatePicker && (
-          <DateTimePicker
-            value={expenseDate}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={(event, selectedDate) => {
-              setShowDatePicker(Platform.OS === 'ios');
-              if (selectedDate) {
-                setExpenseDate(selectedDate);
-              }
-            }}
-            maximumDate={new Date()}
-          />
+        {/* Date Picker - Modal for iOS, inline for Android */}
+        {Platform.OS === 'ios' ? (
+          <Modal
+            visible={showDatePicker}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowDatePicker(false)}
+          >
+            <View style={styles.datePickerModalBackdrop}>
+              <View style={styles.datePickerModalContainer}>
+                <View style={styles.datePickerModalHeader}>
+                  <Text style={styles.datePickerModalTitle}>Select Date</Text>
+                  <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                    <Ionicons name="close" size={scaledFontSize.xl} color={colors.primaryText} />
+                  </TouchableOpacity>
+                </View>
+                <DateTimePicker
+                  value={expenseDate}
+                  mode="date"
+                  display="spinner"
+                  onChange={(event, selectedDate) => {
+                    if (selectedDate) {
+                      setExpenseDate(selectedDate);
+                    }
+                  }}
+                  maximumDate={new Date()}
+                  style={styles.datePickerIOS}
+                />
+                <TouchableOpacity
+                  style={styles.datePickerDoneButton}
+                  onPress={() => setShowDatePicker(false)}
+                >
+                  <Text style={styles.datePickerDoneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
+        ) : (
+          showDatePicker && (
+            <DateTimePicker
+              value={expenseDate}
+              mode="date"
+              display="default"
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(false);
+                if (selectedDate) {
+                  setExpenseDate(selectedDate);
+                }
+              }}
+              maximumDate={new Date()}
+            />
+          )
         )}
 
         {/* Notes */}
@@ -392,6 +479,47 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
               )}
             />
             <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowCategoryModal(false)}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Currency Modal */}
+      <Modal
+        visible={showCurrencyModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCurrencyModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Select Currency</Text>
+            <FlatList
+              data={currencies}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.modalItem}
+                  onPress={() => {
+                    setSelectedCurrency(item);
+                    setShowCurrencyModal(false);
+                  }}
+                >
+                  <View style={styles.currencyItemContent}>
+                    <Text style={styles.currencyItemSymbol}>{item.symbol}</Text>
+                    <View style={styles.currencyItemDetails}>
+                      <Text style={styles.currencyItemCode}>{item.code}</Text>
+                      <Text style={styles.currencyItemName}>{item.name}</Text>
+                    </View>
+                  </View>
+                  {selectedCurrency.code === item.code && (
+                    <Ionicons name="checkmark" size={scaledFontSize.xl} color={colors.primaryButton} />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowCurrencyModal(false)}>
               <Text style={styles.modalCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -482,7 +610,16 @@ const createStyles = (
   currencyCode: {
     fontSize: fonts.caption,
     color: colors.secondaryText,
+  },
+  currencyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginLeft: scale(8),
+    paddingVertical: scale(4),
+    paddingHorizontal: scale(8),
+    backgroundColor: colors.background,
+    borderRadius: scale(4),
+    gap: scale(4),
   },
 
   rowInputContainer: {
@@ -621,5 +758,68 @@ const createStyles = (
     fontSize: fonts.caption,
     color: colors.secondaryText,
     marginTop: scale(4),
+  },
+  // Date Picker Modal Styles
+  datePickerModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  datePickerModalContainer: {
+    backgroundColor: colors.cardBackground,
+    borderTopLeftRadius: scale(16),
+    borderTopRightRadius: scale(16),
+    padding: scale(16),
+  },
+  datePickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: scale(8),
+  },
+  datePickerModalTitle: {
+    fontSize: fonts.header,
+    fontWeight: '600',
+    color: colors.primaryText,
+  },
+  datePickerIOS: {
+    height: scale(200),
+  },
+  datePickerDoneButton: {
+    backgroundColor: colors.primaryButton,
+    padding: scale(14),
+    borderRadius: scale(8),
+    alignItems: 'center',
+    marginTop: scale(8),
+  },
+  datePickerDoneText: {
+    color: colors.primaryButtonText,
+    fontSize: fonts.button,
+    fontWeight: '600',
+  },
+  // Currency Item Styles
+  currencyItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  currencyItemSymbol: {
+    fontSize: fonts.xl,
+    fontWeight: '600',
+    color: colors.primaryText,
+    width: scale(30),
+  },
+  currencyItemDetails: {
+    marginLeft: scale(12),
+  },
+  currencyItemCode: {
+    fontSize: fonts.body,
+    fontWeight: '600',
+    color: colors.primaryText,
+  },
+  currencyItemName: {
+    fontSize: fonts.caption,
+    color: colors.secondaryText,
+    marginTop: scale(2),
   },
 });

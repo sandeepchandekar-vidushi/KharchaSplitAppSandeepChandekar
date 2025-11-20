@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { firebaseService } from '../services/firebaseService';
 import { ensureDataUri } from '../utils/imageUtils';
+import { groupApi } from '../services/api/groupApi';
 
 interface AllGroupsScreenProps {
   navigation: any;
@@ -46,14 +47,32 @@ export const AllGroupsScreen: React.FC<AllGroupsScreenProps> = ({ navigation }) 
         setLoading(true);
       }
 
-      // Load both active and completed groups in parallel
-      const [activeGroupsData, completedGroupsData] = await Promise.all([
-        firebaseService.getUserGroups(user.id),
-        firebaseService.getCompletedGroups(user.id),
-      ]);
+      // Try PostgreSQL backend first
+      try {
+        console.log('Loading groups from PostgreSQL backend...');
+        const response = await groupApi.getUserGroups(user.id);
 
-      setActiveGroups(activeGroupsData);
-      setCompletedGroups(completedGroupsData);
+        if (response.success) {
+          // Separate active and completed groups
+          // For now, consider all groups as active (we'll add completed status later)
+          setActiveGroups(response.data);
+          setCompletedGroups([]);
+          console.log(`Loaded ${response.data.length} groups from PostgreSQL`);
+          return;
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        const [activeGroupsData, completedGroupsData] = await Promise.all([
+          firebaseService.getUserGroups(user.id),
+          firebaseService.getCompletedGroups(user.id),
+        ]);
+
+        setActiveGroups(activeGroupsData);
+        setCompletedGroups(completedGroupsData);
+        console.log(`Loaded ${activeGroupsData.length} active and ${completedGroupsData.length} completed groups from Firebase`);
+      }
     } catch (error) {
       console.error('Error loading groups:', error);
       Alert.alert('Error', 'Failed to load groups. Please try again.');

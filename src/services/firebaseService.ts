@@ -14,6 +14,7 @@ export interface UserProfile {
   referralCode?: string; // User's unique referral code
   referredBy?: string; // ID of user who referred this user
   fcmToken?: string; // Firebase Cloud Messaging token for push notifications
+  preferredCurrency?: string; // User's preferred currency code (e.g., 'INR', 'USD')
   createdAt: string;
   updatedAt: string;
   isActive: boolean;
@@ -45,6 +46,7 @@ export interface UpdateUserProfile {
   referralCode?: string; // User's unique referral code
   referredBy?: string; // ID of user who referred this user
   fcmToken?: string; // Firebase Cloud Messaging token for push notifications
+  preferredCurrency?: string; // User's preferred currency code (e.g., 'INR', 'USD')
 }
 
 export interface ReferralHistoryItem {
@@ -173,8 +175,8 @@ export interface PersonalExpense {
 export interface Activity {
   id?: string;
   userId: string;
-  userName: string;
-  type: 'expense_added' | 'payment_made' | 'group_created' | 'group_joined' | 'settlement_created' | 'settlement_confirmed';
+  userName?: string;
+  type: 'expense_added' | 'payment_made' | 'group_created' | 'group_joined' | 'settlement_created' | 'settlement_confirmed' | 'group_completed';
   title: string;
   description?: string;
   groupId?: string;
@@ -1156,6 +1158,34 @@ class FirebaseService {
     } catch (error) {
       console.error('Error completing group:', error);
       throw new Error('Failed to complete group');
+    }
+  }
+
+  /**
+   * Archive a completed group
+   */
+  async archiveGroup(groupId: string, archivedBy?: string): Promise<Group> {
+    try {
+      const archivedTimestamp = new Date().toISOString();
+
+      // Update group to archived status
+      await this._groupsCollection.doc(groupId).update({
+        isArchived: true,
+        archivedAt: archivedTimestamp,
+        archivedBy: archivedBy || null,
+        updatedAt: archivedTimestamp,
+      });
+
+      // Return updated group
+      const archivedGroup = await this.getGroupById(groupId);
+      if (!archivedGroup) {
+        throw new Error('Failed to fetch archived group');
+      }
+
+      return archivedGroup;
+    } catch (error) {
+      console.error('Error archiving group:', error);
+      throw new Error('Failed to archive group');
     }
   }
 

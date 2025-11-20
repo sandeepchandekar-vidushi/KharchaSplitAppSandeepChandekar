@@ -19,6 +19,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { authService } from '../services/authService';
+import { authApi } from '../services/api/authApi';
+import { tokenStorage } from '../services/tokenStorage';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { wp, hp, ms, s, vs } from '../utils/deviceDimensions';
@@ -168,40 +170,140 @@ export const OTPVerificationScreen: React.FC<OTPVerificationScreenProps> = ({
 
     setLoading(true);
     try {
-      // Testing scenario: Allow phone number 9822192700 to login with OTP 123456
-      let isValid = false;
+      // Step 1: Verify OTP with WATI (WhatsApp OTP verification)
+      let watiOtpValid = false;
       if (phoneNumber === '9822192700' && otpValue === '123456') {
-        isValid = true;
+        watiOtpValid = true; // Testing scenario
       } else {
-        isValid = await authService.verifyOTP(phoneNumber, otpValue);
+        watiOtpValid = await authService.verifyOTP(phoneNumber, otpValue);
       }
 
-      if (isValid) {
-        await authService.clearOTP(phoneNumber);
+      if (!watiOtpValid) {
+        handleInvalidOTP();
+        return;
+      }
 
-        const userExists = await authService.checkUserExists(phoneNumber);
+      // Step 2: Clear WATI OTP after successful verification
+      await authService.clearOTP(phoneNumber);
 
-        if (userExists) {
-          const { firebaseService } = await import('../services/firebaseService');
+      // Step 3: Try to login with PostgreSQL backend using simpleLogin
+      // Since OTP is already verified by WATI, we don't need to verify again with backend
+      try {
+        const response = await authApi.simpleLogin(phoneNumber);
+
+        // Check if user doesn't exist in backend
+        if (!response.userExists) {
+          console.log('User not found in database, redirecting to ProfileSetup...');
+          navigation.navigate('ProfileSetup', { phoneNumber });
+          return;
+        }
+
+        if (response.success && response.data) {
+          // User exists in backend - save tokens and login
+          const { user, accessToken, refreshToken } = response.data;
+
+          // Save JWT tokens
+          await tokenStorage.saveAuthData(accessToken, refreshToken, user.id);
+
+          // Save user profile (still using existing storage for compatibility)
           const { userStorage } = await import('../services/userStorage');
+          await userStorage.saveUser({
+            id: user.id,
+            phoneNumber: user.phoneNumber.replace('+91', ''),
+            name: user.name,
+            email: user.email || '',
+            profileImage: user.profileImageBase64 || '',
+            createdAt: user.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isActive: true,
+          });
 
-          const userProfile = await firebaseService.getUserByPhone(phoneNumber);
-          if (userProfile) {
-            await userStorage.saveUser(userProfile);
-            await userStorage.saveAuthToken(userProfile.id);
-            login(userProfile); // Use AuthContext login
-            
-            // Request notification permission after successful login
-            setTimeout(async () => {
-              const result = await NotificationPermissionHelper.requestPermissionIfNeeded();
-              // No UI needed, just request the permission
-            }, 1000); // Small delay to ensure smooth navigation
+          // Login with AuthContext
+          login({
+            id: user.id,
+            phoneNumber: user.phoneNumber.replace('+91', ''),
+            name: user.name,
+            email: user.email || '',
+            profileImage: user.profileImageBase64 || '',
+            createdAt: user.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            isActive: true,
+          });
+
+          // Request notification permission after successful login
+          setTimeout(async () => {
+            await NotificationPermissionHelper.requestPermissionIfNeeded();
+          }, 1000);
+        }
+      } catch (backendError: any) {
+        // If backend returns user not found error, navigate to ProfileSetup
+        console.log('Backend login error:', backendError.message);
+
+        // Check if user not found in database
+        if (backendError.response?.status === 404 ||
+            backendError.message?.includes('not found') ||
+            backendError.message?.includes('does not exist')) {
+          console.log('User not found in database, redirecting to ProfileSetup...');
+          navigation.navigate('ProfileSetup', { phoneNumber });
+          return;
+        }
+
+        // For other errors (network, server issues), show error
+        console.error('Backend error during OTP verification:', backendError);
+        Alert.alert('Error', 'Failed to verify OTP. Please check your connection and try again.');
+
+        /* FIREBASE FALLBACK - COMMENTED OUT FOR LOCAL TESTING
+        if (backendError.message?.includes('not found') ||
+            backendError.message?.includes('does not exist') ||
+            backendError.message?.includes('Invalid or expired OTP')) {
+          // PostgreSQL backend error - fallback to Firebase
+          console.log('PostgreSQL backend error, using Firebase fallback...');
+
+          const userExists = await authService.checkUserExists(phoneNumber);
+
+          if (userExists) {
+            // User exists in Firebase - use Firebase login
+            const { firebaseService } = await import('../services/firebaseService');
+            const { userStorage } = await import('../services/userStorage');
+
+            const userProfile = await firebaseService.getUserByPhone(phoneNumber);
+            if (userProfile) {
+              await userStorage.saveUser(userProfile);
+              await userStorage.saveAuthToken(userProfile.id);
+              login(userProfile);
+
+              setTimeout(async () => {
+                await NotificationPermissionHelper.requestPermissionIfNeeded();
+              }, 1000);
+            }
+          } else {
+            navigation.navigate('ProfileSetup', { phoneNumber });
           }
         } else {
-          navigation.navigate('ProfileSetup', { phoneNumber });
+          // Other backend error - fallback to Firebase
+          console.log('Backend connection error, falling back to Firebase...');
+
+          const userExists = await authService.checkUserExists(phoneNumber);
+
+          if (userExists) {
+            const { firebaseService } = await import('../services/firebaseService');
+            const { userStorage } = await import('../services/userStorage');
+
+            const userProfile = await firebaseService.getUserByPhone(phoneNumber);
+            if (userProfile) {
+              await userStorage.saveUser(userProfile);
+              await userStorage.saveAuthToken(userProfile.id);
+              login(userProfile);
+
+              setTimeout(async () => {
+                await NotificationPermissionHelper.requestPermissionIfNeeded();
+              }, 1000);
+            }
+          } else {
+            navigation.navigate('ProfileSetup', { phoneNumber });
+          }
         }
-      } else {
-        handleInvalidOTP();
+        */
       }
     } catch (error) {
       handleInvalidOTP();

@@ -27,6 +27,9 @@ import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import { typography } from '../utils/typography'; // Assuming this path is correct
 import { ExpensesSkeleton, BalancesSkeleton, SettlementSkeleton } from '../components/SkeletonLoader';
 import { GroupInfoModal } from '../components/GroupInfoModal';
+import { expenseApi } from '../services/api/expenseApi';
+import { settlementApi } from '../services/api/settlementApi';
+import { groupApi } from '../services/api/groupApi';
 
 // --- ANIMATION ---
 // Enable LayoutAnimation for Android
@@ -46,11 +49,13 @@ interface Settlement {
   id?: string;
   groupId: string;
   fromUserId: string;
-  fromUserName: string;
+  fromUserName?: string;
   toUserId: string;
-  toUserName: string;
+  toUserName?: string;
   amount: number;
-  status: 'unpaid' | 'pending' | 'paid';
+  currency?: string;
+  status: 'unpaid' | 'pending' | 'paid' | 'confirmed';
+  notes?: string;
   createdAt: string;
   updatedAt: string;
   paidAt?: string;
@@ -174,9 +179,10 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       });
     });
 
-    // Subtract paid settlements from balances
+    // Subtract confirmed/paid settlements from balances
     paidSettlements.forEach(settlement => {
-      if (settlement.status === 'paid') {
+      // Include both 'paid' and 'confirmed' settlements to square off balances
+      if (settlement.status === 'paid' || settlement.status === 'confirmed') {
         const fromUserId = settlement.fromUserId;
         const toUserId = settlement.toUserId;
         const amount = settlement.amount;
@@ -268,15 +274,46 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     }
 
     try {
-      // Import Firebase service dynamically
+      // Import Firebase service dynamically for fallback
       const { firebaseService } = await import('../services/firebaseService');
 
-      // Load real group data
-      const [updatedGroup, groupExpenses, loadedSettlements] = await Promise.all([
-        firebaseService.getGroupById(groupId),
-        firebaseService.getGroupExpenses(groupId),
-        firebaseService.getGroupSettlements(groupId).catch(() => [])
-      ]);
+      let updatedGroup: any;
+      let groupExpenses: any[];
+      let loadedSettlements: any[];
+
+      // Try PostgreSQL backend first
+      try {
+        console.log('Loading group data from PostgreSQL backend...');
+
+        const [groupResponse, expensesResponse, settlementsResponse] = await Promise.all([
+          groupApi.getGroupById(groupId),
+          expenseApi.getGroupExpenses(groupId),
+          settlementApi.getGroupSettlements(groupId).catch(() => ({ success: true, data: [] })),
+        ]);
+
+        if (groupResponse.success) {
+          updatedGroup = groupResponse.data;
+          groupExpenses = expensesResponse.data || [];
+          loadedSettlements = settlementsResponse.data || [];
+          console.log(`Loaded from PostgreSQL: ${groupExpenses.length} expenses, ${loadedSettlements.length} settlements`);
+        } else {
+          throw new Error('PostgreSQL response unsuccessful');
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        const [fbGroup, fbExpenses, fbSettlements] = await Promise.all([
+          firebaseService.getGroupById(groupId),
+          firebaseService.getGroupExpenses(groupId),
+          firebaseService.getGroupSettlements(groupId).catch(() => []),
+        ]);
+
+        updatedGroup = fbGroup;
+        groupExpenses = fbExpenses;
+        loadedSettlements = fbSettlements;
+        console.log(`Loaded from Firebase: ${groupExpenses.length} expenses, ${loadedSettlements.length} settlements`);
+      }
 
       if (updatedGroup) {
         // Update the main group object with fresh data (including cover image)
@@ -326,12 +363,12 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           };
         });
 
-        // Calculate balances dynamically, excluding paid settlements
-        const paidSettlements = loadedSettlements.filter(s => s.status === 'paid');
+        // Calculate balances dynamically, including confirmed/paid settlements
+        const confirmedSettlements = loadedSettlements.filter(s => s.status === 'paid' || s.status === 'confirmed');
         const calculatedBalances = calculateBalancesFromExpenses(
           groupExpenses,
           updatedGroup?.members || [],
-          paidSettlements
+          confirmedSettlements
         );
 
         // Calculate settlements from remaining balances
@@ -412,10 +449,10 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       // Check if there are any pending settlements
       const allSettlements = calculateOptimalSettlements(balances, groupMembers);
       const pendingSettlements = allSettlements.length > 0;
-      
+
       // Also check firebase settlements for pending status
       const firebasePendingSettlements = firebaseSettlements.filter(s => s.status === 'pending' || s.status === 'unpaid');
-      
+
       if (pendingSettlements || firebasePendingSettlements.length > 0) {
         Alert.alert(
           'Cannot Complete Group',
@@ -424,7 +461,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
         );
         return;
       }
-      
+
       Alert.alert(
         'Complete Group',
         'Are you sure you want to complete this group? Once completed, no new expenses can be added, but you can still view the history.',
@@ -437,14 +474,70 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
               try {
                 setLoading(true);
                 const { firebaseService } = await import('../services/firebaseService');
+                const { NotificationService } = await import('../services/notificationService');
+
+                // Complete the group
                 await firebaseService.completeGroup(currentGroup.id, currentUserId || undefined);
+
+                // Send push notification to all group members
+                try {
+                  const currentUserName = groupMembers.find(m => m.userId === currentUserId)?.name || 'Someone';
+                  await NotificationService.sendActivityNotification({
+                    id: `group-completed-${currentGroup.id}-${Date.now()}`,
+                    type: 'group_completed',
+                    title: `${currentUserName} has closed the group "${currentGroup.name}"`,
+                    groupId: currentGroup.id,
+                    groupName: currentGroup.name,
+                    userId: currentUserId || '',
+                    createdAt: new Date().toISOString(),
+                  });
+                  console.log('Push notifications sent for group completion');
+                } catch (notificationError) {
+                  console.error('Failed to send push notifications:', notificationError);
+                  // Don't fail the whole operation if notifications fail
+                }
+
+                // Show archive group popup
                 Alert.alert(
                   'Group Completed',
-                  'The group has been completed successfully. You can view its history from the "See All Groups" section.',
+                  'Would you like to archive this group? Archived groups can be accessed from the "All Groups" section.',
                   [
                     {
-                      text: 'OK',
+                      text: 'Keep in History',
+                      style: 'cancel',
                       onPress: () => navigation.goBack(),
+                    },
+                    {
+                      text: 'Archive',
+                      style: 'default',
+                      onPress: async () => {
+                        try {
+                          // Archive the group
+                          await firebaseService.archiveGroup(currentGroup.id, currentUserId || undefined);
+                          Alert.alert(
+                            'Group Archived',
+                            'The group has been archived. You can find it in the "All Groups" section under Archived.',
+                            [
+                              {
+                                text: 'OK',
+                                onPress: () => navigation.goBack(),
+                              }
+                            ]
+                          );
+                        } catch (archiveError) {
+                          console.error('Failed to archive group:', archiveError);
+                          Alert.alert(
+                            'Archive Failed',
+                            'The group was completed but could not be archived. You can archive it later from the group settings.',
+                            [
+                              {
+                                text: 'OK',
+                                onPress: () => navigation.goBack(),
+                              }
+                            ]
+                          );
+                        }
+                      }
                     }
                   ]
                 );
@@ -460,7 +553,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     } catch (error) {
       Alert.alert('Error', 'Failed to check group status. Please try again.');
     }
-  }, [balances, groupMembers, firebaseSettlements, currentGroup.id, navigation]);
+  }, [balances, groupMembers, firebaseSettlements, currentGroup.id, currentGroup.name, navigation, currentUserId, calculateOptimalSettlements]);
 
   // Settlement Actions
   const handleSettlePayment = useCallback(async (settlement: any) => {
@@ -475,25 +568,48 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             try {
               setSettlementLoading(true);
               const { firebaseService } = await import('../services/firebaseService');
-              
-              const timestamp = new Date().toISOString();
-              await firebaseService.createSettlement({
-                groupId: currentGroup.id,
-                fromUserId: settlement.fromUserId,
-                fromUserName: settlement.from.replace(' (You)', ''),
-                toUserId: settlement.toUserId,
-                toUserName: settlement.to.replace(' (You)', ''),
-                amount: settlement.amount,
-                status: 'pending' as const,
-                createdAt: timestamp,
-                updatedAt: timestamp,
-                paidAt: timestamp,
-              });
-              
-              // Reload settlements
-              const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
-              setFirebaseSettlements(updatedSettlements);
-              
+
+              // Try PostgreSQL backend first
+              try {
+                console.log('Creating settlement in PostgreSQL backend...');
+                const response = await settlementApi.createSettlement({
+                  groupId: currentGroup.id,
+                  fromUserId: settlement.fromUserId,
+                  toUserId: settlement.toUserId,
+                  amount: settlement.amount,
+                  currency: 'INR',
+                });
+
+                if (response.success) {
+                  // Reload settlements from PostgreSQL
+                  const settlementsResponse = await settlementApi.getGroupSettlements(currentGroup.id);
+                  setFirebaseSettlements(settlementsResponse.data || []);
+                  console.log('Settlement created and loaded from PostgreSQL');
+                }
+              } catch (backendError: any) {
+                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+                // Fallback to Firebase
+                const timestamp = new Date().toISOString();
+                await firebaseService.createSettlement({
+                  groupId: currentGroup.id,
+                  fromUserId: settlement.fromUserId,
+                  fromUserName: settlement.from.replace(' (You)', ''),
+                  toUserId: settlement.toUserId,
+                  toUserName: settlement.to.replace(' (You)', ''),
+                  amount: settlement.amount,
+                  status: 'pending' as const,
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                  paidAt: timestamp,
+                });
+
+                // Reload settlements from Firebase
+                const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
+                setFirebaseSettlements(updatedSettlements);
+                console.log('Settlement created and loaded from Firebase');
+              }
+
               Alert.alert('Success', 'Payment marked as pending. Waiting for confirmation from receiver.');
             } catch (error) {
               Alert.alert('Error', 'Failed to mark payment. Please try again.');
@@ -519,17 +635,34 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
               Alert.alert('Error', 'Settlement ID not found');
               return;
             }
-            
+
             try {
               setSettlementLoading(true);
               const { firebaseService } = await import('../services/firebaseService');
-              
-              await firebaseService.confirmSettlement(currentGroup.id, settlement.id);
-              
-              // Reload settlements
-              const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
-              setFirebaseSettlements(updatedSettlements);
-              
+
+              // Try PostgreSQL backend first
+              try {
+                console.log('Confirming settlement in PostgreSQL backend...');
+                const response = await settlementApi.confirmSettlement(settlement.id);
+
+                if (response.success) {
+                  // Reload settlements from PostgreSQL
+                  const settlementsResponse = await settlementApi.getGroupSettlements(currentGroup.id);
+                  setFirebaseSettlements(settlementsResponse.data || []);
+                  console.log('Settlement confirmed and loaded from PostgreSQL');
+                }
+              } catch (backendError: any) {
+                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+                // Fallback to Firebase
+                await firebaseService.confirmSettlement(currentGroup.id, settlement.id);
+
+                // Reload settlements from Firebase
+                const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
+                setFirebaseSettlements(updatedSettlements);
+                console.log('Settlement confirmed and loaded from Firebase');
+              }
+
               Alert.alert('Success', 'Payment confirmed!');
             } catch (error) {
               Alert.alert('Error', 'Failed to confirm payment. Please try again.');

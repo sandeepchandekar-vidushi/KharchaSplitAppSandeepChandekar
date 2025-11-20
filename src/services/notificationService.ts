@@ -126,6 +126,10 @@ export class NotificationService {
         title = '🎉 Member Joined';
         body = activity.title;
         break;
+      case 'group_completed':
+        title = '✅ Group Closed';
+        body = activity.title;
+        break;
       default:
         title = '🔔 KharchaSplit';
         body = activity.title;

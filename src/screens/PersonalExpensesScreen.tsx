@@ -17,6 +17,7 @@ import { firebaseService, PersonalExpense } from '../services/firebaseService';
 import { typography } from '../utils/typography';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useFocusEffect } from '@react-navigation/native';
+import { personalExpenseApi } from '../services/api/personalExpenseApi';
 
 interface PersonalExpensesScreenProps {
   navigation: any;
@@ -53,7 +54,43 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
 
     try {
       setLoading(true);
-      const personalExpenses = await firebaseService.getPersonalExpenses(user.id);
+      let personalExpenses: PersonalExpense[] = [];
+
+      // Try PostgreSQL backend first
+      try {
+        console.log('Loading personal expenses from PostgreSQL backend...');
+        const response = await personalExpenseApi.getPersonalExpenses(user.id);
+
+        if (response.success) {
+          // Map API response to PersonalExpense format
+          personalExpenses = response.data.map(exp => ({
+            id: exp.id,
+            userId: exp.userId,
+            description: exp.description,
+            amount: exp.amount,
+            category: {
+              id: 0,
+              name: exp.category || 'Other',
+              emoji: '📝',
+              color: '#F3F4F6',
+            },
+            receiptBase64: exp.receiptBase64,
+            notes: exp.notes,
+            date: exp.expenseDate,
+            createdAt: exp.createdAt,
+            updatedAt: exp.updatedAt,
+            isActive: true,
+          }));
+          console.log(`Loaded ${personalExpenses.length} personal expenses from PostgreSQL`);
+        }
+      } catch (backendError: any) {
+        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+
+        // Fallback to Firebase
+        personalExpenses = await firebaseService.getPersonalExpenses(user.id);
+        console.log(`Loaded ${personalExpenses.length} personal expenses from Firebase`);
+      }
+
       setExpenses(personalExpenses);
 
       // Calculate total
@@ -93,7 +130,17 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
           style: 'destructive',
           onPress: async () => {
             try {
-              await firebaseService.deletePersonalExpense(expenseId);
+              // Try PostgreSQL backend first
+              try {
+                console.log('Deleting personal expense from PostgreSQL backend...');
+                await personalExpenseApi.deletePersonalExpense(expenseId);
+                console.log('Personal expense deleted successfully from PostgreSQL');
+              } catch (backendError: any) {
+                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+                await firebaseService.deletePersonalExpense(expenseId);
+                console.log('Personal expense deleted successfully from Firebase');
+              }
+
               await loadExpenses();
               Alert.alert('Success', 'Expense deleted successfully');
             } catch (error) {

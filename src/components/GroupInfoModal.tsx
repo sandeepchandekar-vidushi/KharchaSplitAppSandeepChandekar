@@ -145,7 +145,7 @@ export const GroupInfoModal: React.FC<GroupInfoModalProps> = ({
                 <View style={styles.statIconContainer}>
                   <Ionicons name="cash" size={scale(24)} color="#F59E0B" />
                 </View>
-                <Text style={styles.statValue}>
+                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
                   ₹{(totalExpenses / 1000).toFixed(1)}K
                 </Text>
                 <Text style={styles.statLabel}>Total</Text>
