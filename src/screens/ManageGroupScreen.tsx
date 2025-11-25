@@ -42,6 +42,23 @@ interface ManageGroupScreenProps {
   navigation: any;
 }
 
+// Currency symbol helper
+const getCurrencySymbol = (currencyCode?: string): string => {
+  const currencySymbols: Record<string, string> = {
+    INR: '₹',
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    AUD: 'A$',
+    CAD: 'C$',
+    SGD: 'S$',
+    AED: 'د.إ',
+    JPY: '¥',
+    CNY: '¥',
+  };
+  return currencySymbols[currencyCode || 'INR'] || '₹';
+};
+
 export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, navigation }) => {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -394,6 +411,13 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
     },
     statLabel: { fontSize: 14, color: colors.secondaryText },
     statValue: { fontSize: 14, fontWeight: '500', color: colors.primaryText },
+    currencyLabelContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    lockIcon: {
+      marginLeft: 4,
+    },
     membersSection: { padding: 16 },
     sectionTitle: { fontSize: 16, fontWeight: '600', color: colors.primaryText, marginBottom: 12 },
     memberItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
@@ -563,7 +587,19 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Total Expenses:</Text>
-            <Text style={styles.statValue}>₹{firebaseGroup?.totalExpenses?.toFixed(0) || 0}</Text>
+            <Text style={styles.statValue}>
+              {getCurrencySymbol(firebaseGroup?.currency)}{firebaseGroup?.totalExpenses?.toFixed(0) || 0}
+            </Text>
+          </View>
+          {/* Currency - Read Only (locked after group creation) */}
+          <View style={styles.statItem}>
+            <View style={styles.currencyLabelContainer}>
+              <Text style={styles.statLabel}>Currency:</Text>
+              <Ionicons name="lock-closed" size={12} color={colors.secondaryText} style={styles.lockIcon} />
+            </View>
+            <Text style={styles.statValue}>
+              {firebaseGroup?.currency || 'INR'} ({getCurrencySymbol(firebaseGroup?.currency)})
+            </Text>
           </View>
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Created On:</Text>

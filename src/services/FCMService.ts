@@ -1,5 +1,5 @@
 import messaging from '@react-native-firebase/messaging';
-import notifee, { AndroidImportance, AndroidStyle, EventType } from '@notifee/react-native';
+import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { firebaseService } from './firebaseService';
@@ -87,9 +87,10 @@ export class FCMService {
         try {
           await messaging().registerDeviceForRemoteMessages();
         } catch (registerError: any) {
-          // Check if error is due to missing APS entitlement (common in development)
+          // Check if error is due to missing APS entitlement or unregistered (common in development/simulator)
           if (registerError?.message?.includes('aps-environment') ||
-              registerError?.message?.includes('entitlement')) {
+              registerError?.message?.includes('entitlement') ||
+              registerError?.message?.includes('unregistered')) {
             console.log('ℹ️ Push notifications not configured for iOS. Skipping FCM token registration.');
             console.log('ℹ️ To enable: Add Push Notifications capability in Xcode');
             return; // Exit gracefully without token
@@ -103,6 +104,12 @@ export class FCMService {
         if (!isRegistered) {
           await messaging().registerDeviceForRemoteMessages();
         }
+      }
+
+      // Verify device is registered before getting token
+      if (!messaging().isDeviceRegisteredForRemoteMessages) {
+        console.log('ℹ️ Device not registered for remote messages. Skipping FCM token.');
+        return;
       }
 
       // Get FCM token
@@ -119,7 +126,9 @@ export class FCMService {
     } catch (error: any) {
       // Log error details for debugging but don't crash the app
       if (error?.message?.includes('aps-environment') ||
-          error?.message?.includes('entitlement')) {
+          error?.message?.includes('entitlement') ||
+          error?.message?.includes('unregistered') ||
+          error?.code === 'messaging/unregistered') {
         console.log('ℹ️ Push notifications not configured. App will work without notifications.');
       } else {
         console.error('❌ Error getting FCM token:', error?.message || error);
@@ -260,7 +269,20 @@ export class FCMService {
    */
   static async cleanup() {
     try {
-      await messaging().deleteToken();
+      // Check if there's a token before trying to delete
+      const existingToken = await AsyncStorage.getItem(FCM_TOKEN_KEY);
+
+      if (existingToken) {
+        try {
+          await messaging().deleteToken();
+        } catch (deleteError: any) {
+          // Ignore token deletion errors - they're non-critical
+          if (!deleteError.message?.includes('messaging/unknown')) {
+            console.warn('FCM token deletion warning:', deleteError.message);
+          }
+        }
+      }
+
       await AsyncStorage.removeItem(FCM_TOKEN_KEY);
     } catch (error) {
       console.error('Error cleaning up FCM:', error);

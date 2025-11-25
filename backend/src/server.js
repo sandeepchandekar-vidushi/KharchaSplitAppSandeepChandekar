@@ -92,13 +92,14 @@ const startServer = async () => {
       process.exit(1);
     }
 
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log('');
       console.log('╔════════════════════════════════════════╗');
       console.log('║   🚀 KharchaSplit API Server          ║');
       console.log('╚════════════════════════════════════════╝');
       console.log('');
       console.log(`✅ Server running on port ${PORT}`);
+      console.log(`✅ Listening on 0.0.0.0 (all network interfaces)`);
       console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`✅ API Version: ${API_VERSION}`);
       console.log('');

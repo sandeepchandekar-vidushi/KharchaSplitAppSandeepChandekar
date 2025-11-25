@@ -106,7 +106,8 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
   const [showPayerModal, setShowPayerModal] = useState(false);
   const [showSplitModal, setShowSplitModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  
+  const [groupCurrency, setGroupCurrency] = useState<string | null>(null); // Group's locked currency
+
   // --- NEW STATE ---
   // For the "Specify Other" text input
   const [otherCategoryName, setOtherCategoryName] = useState("");
@@ -158,25 +159,39 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
     };
   }, [group]);
 
-  // Set default currency from user's preferred currency
+  // Set currency from group's locked currency (takes priority over user preference)
   useEffect(() => {
-    if (user?.preferredCurrency) {
+    if (groupCurrency) {
+      // Use group's locked currency - this cannot be changed
+      const currency = currencies.find(c => c.code === groupCurrency);
+      if (currency) {
+        setSelectedCurrency({ code: currency.code, symbol: currency.symbol });
+        console.log('[AddExpense] Using group locked currency:', groupCurrency);
+      }
+    } else if (user?.preferredCurrency) {
+      // Fallback to user preference only if group currency is not set
       const userCurrency = currencies.find(c => c.code === user.preferredCurrency);
       if (userCurrency) {
         setSelectedCurrency({ code: userCurrency.code, symbol: userCurrency.symbol });
       }
     }
-  }, [user?.preferredCurrency]);
+  }, [groupCurrency, user?.preferredCurrency]);
 
   const loadGroupMembers = async () => {
     if (!group?.id) return;
-    
+
     setMembersLoading(true);
     try {
       // Load actual group data from Firebase
       const groupData = await firebaseService.getGroupById(group.id);
       if (!groupData) {
         throw new Error('Group not found');
+      }
+
+      // Set the group's locked currency - this takes priority over user preference
+      if (groupData.currency) {
+        setGroupCurrency(groupData.currency);
+        console.log('[AddExpense] Group currency loaded:', groupData.currency);
       }
 
       const formattedMembers: Member[] = groupData.members.map((member) => ({
@@ -616,9 +631,19 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
         {/* --- END NEW UI --- */}
 
 
-        {/* (Amount + Currency unchanged) */}
+        {/* Amount + Currency (locked to group's currency) */}
         <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>Amount</Text>
+          <View style={styles.amountLabelRow}>
+            <Text style={styles.inputLabel}>Amount</Text>
+            {groupCurrency && (
+              <View style={styles.lockedCurrencyBadge}>
+                <Ionicons name="lock-closed" size={scaledFontSize.xs} color={colors.secondaryText} />
+                <Text style={styles.lockedCurrencyText}>
+                  Group currency: {selectedCurrency.code}
+                </Text>
+              </View>
+            )}
+          </View>
           <View style={styles.amountContainer}>
             <Text style={styles.currencySymbol}>{selectedCurrency.symbol}</Text>
             <TextInput
@@ -916,6 +941,26 @@ const createStyles = (
   scrollView: { padding: scale(16) },
   inputContainer: { marginBottom: scale(16) },
   inputLabel: { fontSize: fonts.caption, fontWeight: "500", color: colors.secondaryText, marginBottom: scale(8) },
+  amountLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: scale(8),
+  },
+  lockedCurrencyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+    paddingHorizontal: scale(8),
+    paddingVertical: scale(4),
+    borderRadius: scale(12),
+    gap: scale(4),
+  },
+  lockedCurrencyText: {
+    fontSize: fonts.xs,
+    color: colors.secondaryText,
+    fontWeight: '500',
+  },
   textInput: {
     borderWidth: 1,
     borderColor: colors.cardBackground,

@@ -11,15 +11,31 @@ export class FCMTokenManager {
    */
   static async refreshAndSaveToken(userId: string): Promise<string | null> {
     try {
-
       // Register device for remote messages first
       if (Platform.OS === 'ios') {
-        await messaging().registerDeviceForRemoteMessages();
+        try {
+          await messaging().registerDeviceForRemoteMessages();
+        } catch (registerError: any) {
+          // iOS may fail registration if push entitlements are not configured
+          if (registerError?.message?.includes('unregistered') ||
+              registerError?.message?.includes('aps-environment') ||
+              registerError?.message?.includes('entitlement')) {
+            console.log('ℹ️ Push notifications not configured for iOS. Skipping FCM token.');
+            return null;
+          }
+          throw registerError;
+        }
       } else {
         const isRegistered = messaging().isDeviceRegisteredForRemoteMessages;
         if (!isRegistered) {
           await messaging().registerDeviceForRemoteMessages();
         }
+      }
+
+      // Verify device is registered before getting token
+      if (!messaging().isDeviceRegisteredForRemoteMessages) {
+        console.log('ℹ️ Device not registered for remote messages. Skipping FCM token.');
+        return null;
       }
 
       // Try to delete old token, but don't fail if it doesn't exist
@@ -35,15 +51,21 @@ export class FCMTokenManager {
       if (newToken) {
         // Save to AsyncStorage
         await AsyncStorage.setItem(FCM_TOKEN_KEY, newToken);
-        
+
         // Save to Firebase user document
         await firebaseService.updateUser(userId, { fcmToken: newToken });
-        
+
         return newToken;
       }
 
       return null;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle messaging/unregistered error gracefully
+      if (error?.message?.includes('unregistered') ||
+          error?.code === 'messaging/unregistered') {
+        console.log('ℹ️ Device not registered for push notifications.');
+        return null;
+      }
       console.error('❌ Error refreshing FCM token:', error);
       return null;
     }
@@ -54,15 +76,31 @@ export class FCMTokenManager {
    */
   static async getAndSaveToken(userId: string): Promise<string | null> {
     try {
-
       // Register device for remote messages first
       if (Platform.OS === 'ios') {
-        await messaging().registerDeviceForRemoteMessages();
+        try {
+          await messaging().registerDeviceForRemoteMessages();
+        } catch (registerError: any) {
+          // iOS may fail registration if push entitlements are not configured
+          if (registerError?.message?.includes('unregistered') ||
+              registerError?.message?.includes('aps-environment') ||
+              registerError?.message?.includes('entitlement')) {
+            console.log('ℹ️ Push notifications not configured for iOS. Skipping FCM token.');
+            return null;
+          }
+          throw registerError;
+        }
       } else {
         const isRegistered = messaging().isDeviceRegisteredForRemoteMessages;
         if (!isRegistered) {
           await messaging().registerDeviceForRemoteMessages();
         }
+      }
+
+      // Verify device is registered before getting token
+      if (!messaging().isDeviceRegisteredForRemoteMessages) {
+        console.log('ℹ️ Device not registered for remote messages. Skipping FCM token.');
+        return null;
       }
 
       // Get current token (don't delete old one)
@@ -71,15 +109,21 @@ export class FCMTokenManager {
       if (currentToken) {
         // Save to AsyncStorage
         await AsyncStorage.setItem(FCM_TOKEN_KEY, currentToken);
-        
+
         // Save to Firebase user document
         await firebaseService.updateUser(userId, { fcmToken: currentToken });
-        
+
         return currentToken;
       }
 
       return null;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle messaging/unregistered error gracefully
+      if (error?.message?.includes('unregistered') ||
+          error?.code === 'messaging/unregistered') {
+        console.log('ℹ️ Device not registered for push notifications.');
+        return null;
+      }
       console.error('❌ Error getting FCM token:', error);
       return null;
     }

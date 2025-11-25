@@ -63,24 +63,28 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
 
         if (response.success) {
           // Map API response to PersonalExpense format
-          personalExpenses = response.data.map(exp => ({
-            id: exp.id,
-            userId: exp.userId,
-            description: exp.description,
-            amount: exp.amount,
-            category: {
-              id: 0,
-              name: exp.category || 'Other',
-              emoji: '📝',
-              color: '#F3F4F6',
-            },
-            receiptBase64: exp.receiptBase64,
-            notes: exp.notes,
-            date: exp.expenseDate,
-            createdAt: exp.createdAt,
-            updatedAt: exp.updatedAt,
-            isActive: true,
-          }));
+          personalExpenses = response.data.map(exp => {
+            // Debug: Log the date fields from API
+            console.log('[PersonalExpenses] API expense:', exp.id, 'expenseDate:', exp.expenseDate, 'createdAt:', exp.createdAt);
+            return {
+              id: exp.id,
+              userId: exp.userId,
+              description: exp.description,
+              amount: exp.amount,
+              category: {
+                id: 0,
+                name: exp.category || 'Other',
+                emoji: '📝',
+                color: '#F3F4F6',
+              },
+              receiptBase64: exp.receiptBase64,
+              notes: exp.notes,
+              date: exp.expenseDate || exp.createdAt || new Date().toISOString(),
+              createdAt: exp.createdAt,
+              updatedAt: exp.updatedAt,
+              isActive: true,
+            };
+          });
           console.log(`Loaded ${personalExpenses.length} personal expenses from PostgreSQL`);
         }
       } catch (backendError: any) {
@@ -93,9 +97,9 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
 
       setExpenses(personalExpenses);
 
-      // Calculate total
-      const total = personalExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-      setTotalAmount(total);
+      // Calculate total (ensure amount is a number)
+      const total = personalExpenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+      setTotalAmount(total || 0);
     } catch (error) {
       Alert.alert('Error', 'Failed to load personal expenses');
     } finally {
@@ -153,7 +157,10 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
   };
 
   const formatDate = (dateString: string) => {
+    if (!dateString) return 'No date';
     const date = new Date(dateString);
+    // Check if date is valid
+    if (isNaN(date.getTime())) return 'Invalid date';
     return date.toLocaleDateString('en-IN', {
       day: 'numeric',
       month: 'short',
@@ -167,9 +174,7 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={scaledFontSize.xl} color={colors.primaryText} />
-          </TouchableOpacity>
+          <View style={{ width: scaledFontSize.xl }} />
           <Text style={styles.headerTitle}>Personal Expenses</Text>
           <View style={{ width: scaledFontSize.xl }} />
         </View>
@@ -183,9 +188,7 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={scaledFontSize.xl} color={colors.primaryText} />
-        </TouchableOpacity>
+        <View style={{ width: scaledFontSize.xl }} />
         <Text style={styles.headerTitle}>Personal Expenses</Text>
         <TouchableOpacity
           onPress={() => navigation.navigate('AddPersonalExpense', {
@@ -199,7 +202,7 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
       {/* Summary Card */}
       <View style={styles.summaryCard}>
         <Text style={styles.summaryLabel}>Total Personal Expenses</Text>
-        <Text style={styles.summaryAmount}>₹{totalAmount.toFixed(2)}</Text>
+        <Text style={styles.summaryAmount}>₹{(totalAmount || 0).toFixed(2)}</Text>
         <Text style={styles.summaryCount}>{expenses.length} expense{expenses.length !== 1 ? 's' : ''}</Text>
       </View>
 
@@ -235,7 +238,7 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
                   <Text style={styles.expenseDate}>{formatDate(expense.date)}</Text>
                 </View>
                 <View style={styles.expenseActions}>
-                  <Text style={styles.expenseAmount}>₹{expense.amount.toFixed(2)}</Text>
+                  <Text style={styles.expenseAmount}>₹{(Number(expense.amount) || 0).toFixed(2)}</Text>
                   <TouchableOpacity
                     onPress={() => handleDeleteExpense(expense.id!)}
                     style={styles.deleteButton}

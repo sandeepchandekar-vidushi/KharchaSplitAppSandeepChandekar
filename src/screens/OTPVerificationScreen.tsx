@@ -218,6 +218,9 @@ export const OTPVerificationScreen: React.FC<OTPVerificationScreenProps> = ({
             isActive: true,
           });
 
+          // Save auth token for persistence check (required for isLoggedIn)
+          await userStorage.saveAuthToken(user.id);
+
           // Login with AuthContext
           login({
             id: user.id,

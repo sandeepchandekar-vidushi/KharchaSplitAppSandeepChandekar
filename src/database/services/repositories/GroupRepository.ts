@@ -42,6 +42,7 @@ class GroupRepository {
     name: string;
     description?: string;
     cover_image_base64?: string;
+    currency: string; // Required - locked after creation
     created_by: string;
     members: Array<{ user_id: string; name: string; phone_number?: string; email?: string }>;
   }): Promise<DbOperationResult> {
@@ -53,6 +54,7 @@ class GroupRepository {
       name: data.name,
       description: data.description,
       cover_image_base64: data.cover_image_base64,
+      currency: data.currency || 'INR', // Default to INR if not provided
       created_by: data.created_by,
       created_at: now,
       updated_at: now,

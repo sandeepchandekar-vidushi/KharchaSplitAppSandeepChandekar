@@ -29,6 +29,23 @@ interface Expense {
   amount: number;
 }
 
+// Currency symbol helper
+const getCurrencySymbol = (currencyCode?: string): string => {
+  const currencySymbols: Record<string, string> = {
+    INR: '₹',
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    AUD: 'A$',
+    CAD: 'C$',
+    SGD: 'S$',
+    AED: 'د.إ',
+    JPY: '¥',
+    CNY: '¥',
+  };
+  return currencySymbols[currencyCode || 'INR'] || '₹';
+};
+
 interface GroupInfoModalProps {
   visible: boolean;
   onClose: () => void;
@@ -146,10 +163,21 @@ export const GroupInfoModal: React.FC<GroupInfoModalProps> = ({
                   <Ionicons name="cash" size={scale(24)} color="#F59E0B" />
                 </View>
                 <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
-                  ₹{(totalExpenses / 1000).toFixed(1)}K
+                  {getCurrencySymbol(currentGroup?.currency)}{(totalExpenses / 1000).toFixed(1)}K
                 </Text>
                 <Text style={styles.statLabel}>Total</Text>
               </View>
+            </View>
+
+            {/* Currency Card */}
+            <View style={styles.currencyCard}>
+              <View style={styles.currencyIconContainer}>
+                <Ionicons name="lock-closed" size={scale(16)} color={colors.secondaryText} />
+              </View>
+              <Text style={styles.currencyLabel}>Group Currency:</Text>
+              <Text style={styles.currencyValue}>
+                {currentGroup?.currency || 'INR'} ({getCurrencySymbol(currentGroup?.currency)})
+              </Text>
             </View>
 
             {/* Info Card */}
@@ -345,6 +373,39 @@ const createStyles = (
     fontSize: fonts.caption,
     color: colors.secondaryText,
     fontWeight: '500',
+  },
+  currencyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBackground,
+    borderRadius: scale(12),
+    padding: scale(12),
+    marginBottom: scale(16),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  currencyIconContainer: {
+    width: scale(28),
+    height: scale(28),
+    borderRadius: scale(14),
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: scale(10),
+  },
+  currencyLabel: {
+    fontSize: fonts.caption,
+    color: colors.secondaryText,
+    fontWeight: '500',
+    marginRight: scale(6),
+  },
+  currencyValue: {
+    fontSize: fonts.body,
+    color: colors.primaryText,
+    fontWeight: '600',
   },
   infoRow: {
     flexDirection: 'row',

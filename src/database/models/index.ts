@@ -27,6 +27,7 @@ export interface GroupModel extends BaseModel {
   description?: string;
   cover_image_base64?: string;
   created_by: string;
+  currency: string; // Locked after group creation - cannot be changed
 }
 
 // Group member model

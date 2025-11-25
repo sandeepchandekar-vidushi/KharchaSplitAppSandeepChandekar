@@ -55,9 +55,20 @@ const CURRENCIES = [
   { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
 ];
 
+interface PrefillExpenseData {
+  description: string;
+  amount: number;
+  currency: string;
+  category: string;
+  date: string;
+  notes?: string;
+  receiptBase64?: string;
+}
+
 interface CreateNewGroupScreenProps {
   onClose?: () => void;
-  onSave?: (group: any) => void;
+  onSave?: (group: any, prefillExpense?: PrefillExpenseData) => void;
+  prefillExpense?: PrefillExpenseData;
 }
 
 interface FilteredContact extends Contact {
@@ -65,7 +76,7 @@ interface FilteredContact extends Contact {
   userProfile?: any;
 }
 
-export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onClose, onSave }) => {
+export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onClose, onSave, prefillExpense }) => {
   const { colors } = useTheme();
   const { user } = useAuth();
   const [groupData, setGroupData] = useState<GroupData>({
@@ -866,7 +877,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
           {
             text: 'OK',
             onPress: () => {
-              if (onSave) onSave(newGroup);
+              if (onSave) onSave(newGroup, prefillExpense);
               if (onClose) onClose();
             }
           }

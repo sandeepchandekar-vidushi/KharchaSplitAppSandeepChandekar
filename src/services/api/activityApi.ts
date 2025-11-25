@@ -7,9 +7,10 @@ import axios, { AxiosInstance } from 'axios';
 import { tokenStorage } from '../tokenStorage';
 
 // For local testing, use computer's IP address (not localhost - won't work on device/emulator)
-// Your computer's IP: 192.168.8.143
+// Your computer's IP: 192.168.1.8
 // For production, use: https://api.kharchasplit.com/api/v1
-const API_BASE_URL = 'http://192.168.8.143:3000/api/v1';
+// const API_BASE_URL = 'http://192.168.1.8:3000/api/v1';
+const API_BASE_URL = 'https://api.kharchasplit.com/api/v1';
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({
@@ -221,6 +222,31 @@ export const activityApi = {
   }> {
     try {
       const response = await apiClient.delete(`/activities/${activityId}`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Create a new activity
+   */
+  async createActivity(data: {
+    userId: string;
+    activityType: string;
+    entityType: string;
+    entityId: string;
+    title: string;
+    description?: string;
+    metadata?: Record<string, any>;
+    groupId?: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: Activity;
+  }> {
+    try {
+      const response = await apiClient.post('/activities', data);
       return response.data;
     } catch (error: any) {
       throw error;

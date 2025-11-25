@@ -22,11 +22,16 @@ import { AllGroupsScreen } from '../screens/AllGroupsScreen';
 import { PaymentHistoryScreen } from '../screens/PaymentHistoryScreen';
 import { PersonalExpensesScreen } from '../screens/PersonalExpensesScreen';
 import { AddPersonalExpenseScreen } from '../screens/AddPersonalExpenseScreen';
+import { ScanScreen } from '../screens/ScanScreen';
+import { ScanReviewScreen } from '../screens/ScanReviewScreen';
+import { OCRResult } from '../services/api/ocrApi';
 
 type TabParamList = {
-  Home: undefined;
   Activity: undefined;
-  Profile: undefined;
+  Home: undefined;
+  Scan: undefined;
+  PersonalExpenses: undefined;
+  More: undefined;
 };
 
 type StackParamList = {
@@ -66,25 +71,67 @@ const TabBarIcon: React.FC<TabBarIconProps> = ({ name, focused }) => {
     }
   };
 
+  // Get larger icon size for the center Scan button
+  const getScanIconSize = () => {
+    if (isTablet()) {
+      return iconSizes.lg * 1.5; // Even larger for tablets
+    } else if (isSmallDevice()) {
+      return iconSizes.md * 1.4; // Larger than normal for small devices
+    } else {
+      return iconSizes.lg * 1.3; // Larger for medium/large devices
+    }
+  };
+
   const iconSize = getIconSize();
+  const scanIconSize = getScanIconSize();
 
   const getIcon = () => {
     switch (name) {
-      case 'Home':
-        return <MaterialIcons
-          name="group"
-          size={iconSize}
-          color={focused ? colors.activeIcon : colors.inactiveIcon}
-        />;
       case 'Activity':
         return <MaterialIcons
           name="notifications"
           size={iconSize}
           color={focused ? colors.activeIcon : colors.inactiveIcon}
         />;
-      case 'Profile':
+      case 'Home':
+        return <MaterialIcons
+          name="group"
+          size={iconSize}
+          color={focused ? colors.activeIcon : colors.inactiveIcon}
+        />;
+      case 'Scan':
+        // Center scan button with larger icon
+        return (
+          <View style={{
+            backgroundColor: focused ? colors.activeIcon : colors.primaryButton,
+            borderRadius: s(28),
+            width: s(56),
+            height: s(56),
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginBottom: s(20), // Lift the button up
+            shadowColor: colors.primaryButton,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: s(8),
+            elevation: 8,
+          }}>
+            <MaterialIcons
+              name="document-scanner"
+              size={scanIconSize}
+              color="#FFFFFF"
+            />
+          </View>
+        );
+      case 'PersonalExpenses':
+        return <MaterialIcons
+          name="receipt-long"
+          size={iconSize}
+          color={focused ? colors.activeIcon : colors.inactiveIcon}
+        />;
+      case 'More':
         return <Ionicons
-          name="person"
+          name="person-circle-outline"
           size={iconSize}
           color={focused ? colors.activeIcon : colors.inactiveIcon}
         />;
@@ -128,13 +175,45 @@ export const HomeStackNavigator: React.FC = () => {
   );
 };
 
-// Profile Stack Navigator
+// Profile Stack Navigator (renamed to More)
 export const ProfileStackNavigator: React.FC = () => {
   return (
     <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
       <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} />
       <ProfileStack.Screen name="PaymentHistory" component={PaymentHistoryScreen} />
     </ProfileStack.Navigator>
+  );
+};
+
+// Personal Expenses Stack Navigator
+const PersonalExpensesStack = createStackNavigator();
+
+export const PersonalExpensesStackNavigator: React.FC = () => {
+  return (
+    <PersonalExpensesStack.Navigator screenOptions={{ headerShown: false }}>
+      <PersonalExpensesStack.Screen name="PersonalExpensesMain" component={PersonalExpensesScreen} />
+      <PersonalExpensesStack.Screen name="AddPersonalExpense" component={AddPersonalExpenseScreen} />
+    </PersonalExpensesStack.Navigator>
+  );
+};
+
+// Scan Stack Navigator for bill scanning feature
+type ScanStackParamList = {
+  ScanMain: undefined;
+  ScanReview: {
+    ocrResult: OCRResult;
+    imageBase64: string | null;
+  };
+};
+
+const ScanStack = createStackNavigator<ScanStackParamList>();
+
+export const ScanStackNavigator: React.FC = () => {
+  return (
+    <ScanStack.Navigator screenOptions={{ headerShown: false }}>
+      <ScanStack.Screen name="ScanMain" component={ScanScreen} />
+      <ScanStack.Screen name="ScanReview" component={ScanReviewScreen} />
+    </ScanStack.Navigator>
   );
 };
 
@@ -234,8 +313,18 @@ export const AuthenticatedNavigator: React.FC = () => {
       })}
     >
       <Tab.Screen name="Activity" component={ActivityScreen} options={{ title: 'Activity', headerShown: false }} />
-      <Tab.Screen name="Home" component={HomeStackNavigator} options={{ title: 'My Groups', headerShown: false }} />
-      <Tab.Screen name="Profile" component={ProfileStackNavigator} options={{ title: 'Profile', headerShown: false }} />
+      <Tab.Screen name="Home" component={HomeStackNavigator} options={{ title: 'Groups', headerShown: false }} />
+      <Tab.Screen
+        name="Scan"
+        component={ScanStackNavigator}
+        options={{
+          title: '',
+          headerShown: false,
+          tabBarLabel: () => null, // Hide label for scan button
+        }}
+      />
+      <Tab.Screen name="PersonalExpenses" component={PersonalExpensesStackNavigator} options={{ title: 'Expense', headerShown: false }} />
+      <Tab.Screen name="More" component={ProfileStackNavigator} options={{ title: 'More', headerShown: false }} />
     </Tab.Navigator>
   );
 };

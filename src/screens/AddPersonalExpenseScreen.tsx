@@ -26,6 +26,7 @@ import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHel
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { personalExpenseApi } from '../services/api/personalExpenseApi';
+import { activityApi } from '../services/api/activityApi';
 
 // Enable LayoutAnimation for Android
 if (
@@ -183,6 +184,7 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
       const categoryName = selectedCategory.name === 'Other' ? (otherCategoryName || 'Other') : selectedCategory.name;
 
       // Try PostgreSQL backend first
+      let createdExpenseId: string | null = null;
       try {
         console.log('Creating personal expense in PostgreSQL backend...');
 
@@ -197,7 +199,30 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
         });
 
         if (response.success) {
-          console.log('Personal expense created successfully in PostgreSQL:', response.data.id);
+          createdExpenseId = response.data.id;
+          console.log('Personal expense created successfully in PostgreSQL:', createdExpenseId);
+
+          // Create activity record for this personal expense
+          try {
+            await activityApi.createActivity({
+              userId: user.id,
+              activityType: 'personal_expense_added',
+              entityType: 'personal_expense',
+              entityId: createdExpenseId,
+              title: `Personal: ${description.trim()}`,
+              description: categoryName ? `Category: ${categoryName}` : undefined,
+              metadata: {
+                amount: totalAmount,
+                currency: selectedCurrency.code,
+                category: categoryName,
+                expenseDate: expenseDate.toISOString(),
+              },
+            });
+            console.log('Activity created for personal expense');
+          } catch (activityError) {
+            console.log('Failed to create activity record:', activityError);
+            // Don't fail the expense creation if activity creation fails
+          }
         }
       } catch (backendError: any) {
         console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);

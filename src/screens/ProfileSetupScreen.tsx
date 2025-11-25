@@ -167,6 +167,9 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
             isActive: true,
           });
 
+          // Save auth token for persistence check (required for isLoggedIn)
+          await userStorage.saveAuthToken(user.id);
+
           // Apply referral code if provided and valid (still using Firebase for this feature)
           if (referralCode.trim() && referralValid === true) {
             try {

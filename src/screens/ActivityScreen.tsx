@@ -18,13 +18,25 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, Activity } from '../services/firebaseService';
+import { firebaseService, Activity, PersonalExpense } from '../services/firebaseService';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ActivityScreenSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityApi } from '../services/api/activityApi';
+import { personalExpenseApi } from '../services/api/personalExpenseApi';
+
+// Filter types
+type ActivityFilter = 'all' | 'groups' | 'personal' | 'other';
+
+// Extended activity type to include personal expenses
+interface ExtendedActivity extends Activity {
+  isPersonalExpense?: boolean;
+  personalExpenseData?: PersonalExpense;
+  personalExpenseId?: string; // For activities from API to verify if expense still exists
+  isDeleted?: boolean; // True if the linked expense has been deleted
+}
 
 interface ActivityScreenProps {
   navigation: any;
@@ -38,14 +50,25 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
   const baseWidth = 375;
   const scale = (size: number) => (screenWidth / baseWidth) * size;
 
-  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activities, setActivities] = useState<ExtendedActivity[]>([]);
+  const [filteredActivities, setFilteredActivities] = useState<ExtendedActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingActivityId, setDeletingActivityId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  
+  const [activeFilter, setActiveFilter] = useState<ActivityFilter>('all');
+  const [showFilterModal, setShowFilterModal] = useState(false);
+
   // Animation for content fade in
   const contentFadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Filter options
+  const filterOptions: { key: ActivityFilter; label: string; icon: string }[] = [
+    { key: 'all', label: 'All Activities', icon: 'list' },
+    { key: 'groups', label: 'Group Activities', icon: 'group' },
+    { key: 'personal', label: 'Personal Expenses', icon: 'person' },
+    { key: 'other', label: 'Other Activities', icon: 'more-horiz' },
+  ];
 
   const loadActivities = useCallback(async () => {
     if (!user?.id) {
@@ -68,32 +91,40 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
 
       // Get activities from API or Firebase
       const dataPromise = (async () => {
-        let loadedActivities: Activity[] = [];
+        let loadedActivities: ExtendedActivity[] = [];
+        let personalExpenseActivities: ExtendedActivity[] = [];
 
-        // Try PostgreSQL backend first
+        // Load group/user activities
         try {
           console.log('Loading activities from PostgreSQL backend...');
           const response = await activityApi.getUserActivities(user.id, 1, 50);
 
           if (response.success) {
             // Map API response to Activity format
-            loadedActivities = response.data.map(act => ({
-              id: act.id,
-              userId: act.userId,
-              userName: '',
-              type: act.activityType as Activity['type'],
-              title: act.title,
-              description: act.description,
-              groupId: act.groupId,
-              groupName: act.metadata?.groupName,
-              expenseId: act.metadata?.expenseId,
-              expenseDescription: act.metadata?.expenseDescription,
-              amount: act.metadata?.amount,
-              relatedUserId: act.metadata?.relatedUserId,
-              relatedUserName: act.metadata?.relatedUserName,
-              createdAt: act.createdAt,
-              metadata: act.metadata,
-            }));
+            // Check if activity is a personal expense activity by activityType
+            loadedActivities = response.data.map(act => {
+              const isPersonalExpenseActivity = act.activityType === 'personal_expense_added';
+              return {
+                id: act.id,
+                userId: act.userId,
+                userName: '',
+                type: act.activityType as Activity['type'],
+                title: act.title,
+                description: act.description,
+                groupId: act.groupId,
+                groupName: act.metadata?.groupName,
+                expenseId: act.metadata?.expenseId,
+                expenseDescription: act.metadata?.expenseDescription,
+                amount: act.metadata?.amount,
+                relatedUserId: act.metadata?.relatedUserId,
+                relatedUserName: act.metadata?.relatedUserName,
+                createdAt: act.createdAt,
+                metadata: act.metadata,
+                isPersonalExpense: isPersonalExpenseActivity,
+                // Store the personal expense ID from entityId for later verification
+                personalExpenseId: isPersonalExpenseActivity ? act.entityId : undefined,
+              };
+            });
             console.log(`Loaded ${loadedActivities.length} activities from PostgreSQL`);
           }
         } catch (backendError: any) {
@@ -113,31 +144,67 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
           const allActivities = [...userActivities, ...groupActivities];
           loadedActivities = allActivities.filter((activity, index, self) =>
             index === self.findIndex(a => a.id === activity.id)
-          );
+          ).map(act => ({ ...act, isPersonalExpense: false }));
           console.log(`Loaded ${loadedActivities.length} activities from Firebase`);
         }
 
+        // For personal expense activities, check which expenses still exist
+        const personalExpenseActivityIds = loadedActivities
+          .filter(act => act.isPersonalExpense && act.personalExpenseId)
+          .map(act => act.personalExpenseId as string);
+
+        // Get existing personal expenses to check which ones are deleted
+        let existingExpenseIds = new Set<string>();
+        if (personalExpenseActivityIds.length > 0) {
+          try {
+            console.log('Checking which personal expenses still exist...');
+            const personalResponse = await personalExpenseApi.getPersonalExpenses(user.id, 1, 100);
+            if (personalResponse.success) {
+              existingExpenseIds = new Set(personalResponse.data.map(exp => exp.id));
+              console.log(`Found ${existingExpenseIds.size} existing personal expenses`);
+            }
+          } catch (err) {
+            console.log('Error fetching personal expenses for existence check:', err);
+          }
+        }
+
+        // Mark activities as deleted if their expense no longer exists
+        loadedActivities = loadedActivities.map(act => {
+          if (act.isPersonalExpense && act.personalExpenseId) {
+            return {
+              ...act,
+              isDeleted: !existingExpenseIds.has(act.personalExpenseId),
+            };
+          }
+          return act;
+        });
+
+        // Combine all activities (no backward compatibility - only from activity API)
+        const allActivities = [...loadedActivities, ...personalExpenseActivities];
+
         // Sort by creation time (most recent first)
-        loadedActivities.sort((a, b) => {
+        allActivities.sort((a, b) => {
           const aTime = new Date(a.createdAt).getTime();
           const bTime = new Date(b.createdAt).getTime();
           return bTime - aTime;
         });
 
         // Limit to 50 most recent
-        return loadedActivities.slice(0, 50);
+        return allActivities.slice(0, 50);
       })();
 
       // Wait for both data loading and minimum loading time
       const [limitedActivities] = await Promise.all([dataPromise, minLoadingTime]);
 
       setActivities(limitedActivities);
+      // Apply current filter
+      applyFilter(limitedActivities, activeFilter);
     } catch (error) {
       Alert.alert('Error', 'Failed to load recent activities. Please try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
-      
+
       // Set initial loading to false after first load and animate content in
       if (initialLoading) {
         setInitialLoading(false);
@@ -148,7 +215,37 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
         }).start();
       }
     }
-  }, [user?.id, initialLoading, contentFadeAnim]);
+  }, [user?.id, initialLoading, contentFadeAnim, activeFilter]);
+
+  // Apply filter to activities
+  const applyFilter = useCallback((allActivities: ExtendedActivity[], filter: ActivityFilter) => {
+    let filtered: ExtendedActivity[];
+
+    switch (filter) {
+      case 'groups':
+        filtered = allActivities.filter(a => !a.isPersonalExpense && a.groupId);
+        break;
+      case 'personal':
+        filtered = allActivities.filter(a => a.isPersonalExpense);
+        break;
+      case 'other':
+        filtered = allActivities.filter(a => !a.isPersonalExpense && !a.groupId);
+        break;
+      case 'all':
+      default:
+        filtered = allActivities;
+        break;
+    }
+
+    setFilteredActivities(filtered);
+  }, []);
+
+  // Handle filter change
+  const handleFilterChange = (filter: ActivityFilter) => {
+    setActiveFilter(filter);
+    applyFilter(activities, filter);
+    setShowFilterModal(false);
+  };
 
   useEffect(() => {
     // Only load data if user is available
@@ -186,7 +283,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     loadActivities();
   }, [loadActivities]);
 
-  const getActivityIcon = (type: Activity['type']) => {
+  const getActivityIcon = (type: Activity['type'], isPersonal?: boolean) => {
+    if (isPersonal) {
+      return 'account-balance-wallet'; // Wallet icon for personal expenses
+    }
     switch (type) {
       case 'expense_added':
         return 'receipt';
@@ -202,7 +302,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     }
   };
 
-  const getActivityColor = (type: Activity['type']) => {
+  const getActivityColor = (type: Activity['type'], isPersonal?: boolean) => {
+    if (isPersonal) {
+      return '#8B5CF6'; // Purple for personal expenses
+    }
     switch (type) {
       case 'expense_added':
         return '#F59E0B'; // Orange
@@ -220,8 +323,13 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
   };
 
   const formatRelativeTime = (dateString: string) => {
+    if (!dateString) return 'Recently';
     const now = new Date();
     const date = new Date(dateString);
+
+    // Check if date is valid
+    if (isNaN(date.getTime())) return 'Recently';
+
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
 
     if (diffInMinutes < 1) return 'Just now';
@@ -239,12 +347,40 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     return date.toLocaleDateString();
   };
 
-  const handleActivityPress = (activity: Activity) => {
-    if (activity.groupId) {
+  const handleActivityPress = async (activity: ExtendedActivity) => {
+    if (activity.isPersonalExpense) {
+      // For personal expense activities, check if the expense still exists
+      const expenseId = activity.personalExpenseId || activity.personalExpenseData?.id;
+
+      if (expenseId) {
+        try {
+          // Try to fetch the expense to verify it exists
+          await personalExpenseApi.getPersonalExpenseById(expenseId);
+          // Expense exists, navigate to Personal Expenses tab
+          navigation.navigate('PersonalExpenses');
+        } catch (error: any) {
+          // Expense not found (deleted)
+          if (error.response?.status === 404 || error.message?.includes('not found')) {
+            Alert.alert(
+              'Expense Deleted',
+              'This personal expense has been deleted and is no longer available.',
+              [{ text: 'OK', style: 'default' }]
+            );
+          } else {
+            // Other error, still try to navigate
+            console.log('Error checking expense existence:', error);
+            navigation.navigate('PersonalExpenses');
+          }
+        }
+      } else {
+        // No expense ID, just navigate
+        navigation.navigate('PersonalExpenses');
+      }
+    } else if (activity.groupId) {
       // Navigate to Home tab first, then to GroupDetail screen
       navigation.navigate('Home', {
         screen: 'GroupDetail',
-        params: { 
+        params: {
           group: { id: activity.groupId, name: activity.groupName },
           currentUserId: user?.id,
         }
@@ -372,55 +508,71 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     );
   };
 
-  const renderActivity = (activity: Activity) => {
-    const iconName = getActivityIcon(activity.type);
-    const iconColor = getActivityColor(activity.type);
+  const renderActivity = (activity: ExtendedActivity) => {
+    const isPersonal = activity.isPersonalExpense;
+    const isDeleted = activity.isDeleted;
+    const iconName = getActivityIcon(activity.type, isPersonal);
+    const iconColor = isDeleted ? colors.secondaryText : getActivityColor(activity.type, isPersonal);
+
+    // Greyed out styles for deleted expenses
+    const deletedOpacity = isDeleted ? 0.5 : 1;
 
     const activityContent = (
       <TouchableOpacity
-        style={styles(colors, scale).activityItem}
+        style={[styles(colors, scale).activityItem, { opacity: deletedOpacity }]}
         onPress={() => handleActivityPress(activity)}
         activeOpacity={0.7}
       >
         <View style={[styles(colors, scale).activityIcon, { backgroundColor: iconColor + '20' }]}>
           <MaterialIcons name={iconName} size={scale(24)} color={iconColor} />
         </View>
-        
+
         <View style={styles(colors, scale).activityContent}>
-          <Text style={styles(colors, scale).activityTitle} numberOfLines={2}>
+          <Text style={[
+            styles(colors, scale).activityTitle,
+            isDeleted && { color: colors.secondaryText, textDecorationLine: 'line-through' }
+          ]} numberOfLines={2}>
             {activity.title}
           </Text>
-          
+
           {activity.description && (
             <Text style={styles(colors, scale).activityDescription} numberOfLines={1}>
               {activity.description}
             </Text>
           )}
-          
+
           <View style={styles(colors, scale).activityMeta}>
-            {activity.groupName && (
+            {isDeleted ? (
+              <Text style={[styles(colors, scale).activityGroup, { color: '#EF4444' }]} numberOfLines={1}>
+                Deleted
+              </Text>
+            ) : activity.groupName ? (
               <Text style={styles(colors, scale).activityGroup} numberOfLines={1}>
                 {activity.groupName}
               </Text>
-            )}
-            <Text style={styles(colors, scale).activityTime}>
-              {formatRelativeTime(activity.createdAt)}
-            </Text>
+            ) : isPersonal ? (
+              <Text style={[styles(colors, scale).activityGroup, { color: '#8B5CF6' }]} numberOfLines={1}>
+                Personal
+              </Text>
+            ) : null}
           </View>
         </View>
-        
-        {activity.amount && (
-          <View style={styles(colors, scale).activityAmount}>
-            <Text style={[styles(colors, scale).amountText, { color: iconColor }]}>
-              ₹{activity.amount.toFixed(0)}
+
+        <View style={styles(colors, scale).activityRight}>
+          {activity.amount != null && (
+            <Text style={[styles(colors, scale).amountText, { color: isDeleted ? colors.secondaryText : iconColor }]}>
+              ₹{(Number(activity.amount) || 0).toFixed(0)}
             </Text>
-          </View>
-        )}
-        
-        <MaterialIcons 
-          name="chevron-right" 
-          size={scale(20)} 
-          color={colors.secondaryText} 
+          )}
+          <Text style={styles(colors, scale).activityTime}>
+            {formatRelativeTime(activity.createdAt)}
+          </Text>
+        </View>
+
+        <MaterialIcons
+          name="chevron-right"
+          size={scale(20)}
+          color={colors.secondaryText}
         />
       </TouchableOpacity>
     );
@@ -446,15 +598,85 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
     );
   };
 
-  const renderEmptyState = () => (
-    <View style={styles(colors, scale).emptyState}>
-      <MaterialIcons name="event-note" size={scale(80)} color={colors.secondaryText} />
-      <Text style={styles(colors, scale).emptyStateTitle}>No Recent Activity</Text>
-      <Text style={styles(colors, scale).emptyStateDescription}>
-        Your recent activities will appear here once you start adding expenses and making payments.
-      </Text>
-    </View>
-  );
+  const renderEmptyState = () => {
+    const emptyMessages: Record<ActivityFilter, { title: string; description: string }> = {
+      all: {
+        title: 'No Recent Activity',
+        description: 'Your recent activities will appear here once you start adding expenses and making payments.',
+      },
+      groups: {
+        title: 'No Group Activities',
+        description: 'Group activities will appear here when you add expenses or make payments in your groups.',
+      },
+      personal: {
+        title: 'No Personal Expenses',
+        description: 'Your personal expenses will appear here. Tap the Scan button to add your first expense!',
+      },
+      other: {
+        title: 'No Other Activities',
+        description: 'Other activities like group joins and account updates will appear here.',
+      },
+    };
+
+    const message = emptyMessages[activeFilter];
+
+    return (
+      <View style={styles(colors, scale).emptyState}>
+        <MaterialIcons name="event-note" size={scale(80)} color={colors.secondaryText} />
+        <Text style={styles(colors, scale).emptyStateTitle}>{message.title}</Text>
+        <Text style={styles(colors, scale).emptyStateDescription}>{message.description}</Text>
+      </View>
+    );
+  };
+
+  const getFilterLabel = () => {
+    const option = filterOptions.find(f => f.key === activeFilter);
+    return option?.label || 'All Activities';
+  };
+
+  const renderFilterDropdown = () => {
+    if (!showFilterModal) return null;
+
+    return (
+      <>
+        <TouchableOpacity
+          style={styles(colors, scale).filterMenuOverlay}
+          activeOpacity={1}
+          onPress={() => setShowFilterModal(false)}
+        />
+        <View style={styles(colors, scale).filterMenuContainer}>
+          {filterOptions.map((option, index) => (
+            <React.Fragment key={option.key}>
+              <TouchableOpacity
+                style={styles(colors, scale).filterMenuItem}
+                onPress={() => handleFilterChange(option.key)}
+              >
+                <MaterialIcons
+                  name={option.icon}
+                  size={scale(20)}
+                  color={activeFilter === option.key ? colors.primaryButton : colors.primaryText}
+                />
+                <Text
+                  style={[
+                    styles(colors, scale).filterMenuText,
+                    activeFilter === option.key && styles(colors, scale).filterMenuTextActive,
+                  ]}
+                >
+                  {option.label}
+                </Text>
+                {activeFilter === option.key && (
+                  <MaterialIcons name="check" size={scale(18)} color={colors.primaryButton} />
+                )}
+              </TouchableOpacity>
+              {index < filterOptions.length - 1 && (
+                <View style={styles(colors, scale).filterMenuDivider} />
+              )}
+            </React.Fragment>
+          ))}
+        </View>
+      </>
+    );
+  };
 
   // Show skeleton loader during initial loading
   if (initialLoading) {
@@ -475,16 +697,38 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
         barStyle={colors.statusBarStyle}
         backgroundColor={colors.statusBarBackground}
       />
-      
+
       <Animated.View style={[styles(colors, scale).animatedContainer, { opacity: contentFadeAnim }]}>
         {/* Header */}
         <View style={styles(colors, scale).header}>
           <Text style={styles(colors, scale).headerTitle}>Recent Activity</Text>
+          <TouchableOpacity
+            style={styles(colors, scale).filterButton}
+            onPress={() => setShowFilterModal(true)}
+          >
+            <MaterialIcons name="filter-list" size={scale(24)} color={colors.primaryText} />
+            {activeFilter !== 'all' && (
+              <View style={styles(colors, scale).filterBadge}>
+                <Text style={styles(colors, scale).filterBadgeText}>1</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
+        {/* Active Filter Indicator */}
+        {activeFilter !== 'all' && (
+          <View style={styles(colors, scale).activeFilterBar}>
+            <Text style={styles(colors, scale).activeFilterText}>
+              Showing: {getFilterLabel()}
+            </Text>
+            <TouchableOpacity onPress={() => handleFilterChange('all')}>
+              <MaterialIcons name="close" size={scale(18)} color={colors.primaryButton} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Content */}
-        {loading && activities.length === 0 ? (
+        {loading && filteredActivities.length === 0 ? (
           <View style={styles(colors, scale).loadingContainer}>
             <ActivityIndicator size="large" color={colors.primaryButton} />
             <Text style={styles(colors, scale).loadingText}>Loading activities...</Text>
@@ -507,9 +751,9 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
             }
             showsVerticalScrollIndicator={false}
           >
-          {activities.length > 0 ? (
+          {filteredActivities.length > 0 ? (
             <>
-              {activities.map(renderActivity)}
+              {filteredActivities.map(renderActivity)}
               
               {/* Load more placeholder */}
               {activities.length >= 50 && (
@@ -527,6 +771,9 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
         </GestureHandlerRootView>
         )}
       </Animated.View>
+
+      {/* Filter Dropdown Menu */}
+      {renderFilterDropdown()}
     </SafeAreaView>
   );
 };
@@ -621,7 +868,7 @@ const styles = (colors: any, scale: (size: number) => number) =>
       fontSize: scale(12),
       color: colors.secondaryText,
     },
-    activityAmount: {
+    activityRight: {
       alignItems: 'flex-end',
       marginRight: scale(8),
     },
@@ -700,5 +947,115 @@ const styles = (colors: any, scale: (size: number) => number) =>
     },
     gestureContainer: {
       flex: 1,
+    },
+    // Filter button styles
+    filterButton: {
+      padding: scale(8),
+      borderRadius: scale(20),
+      position: 'relative',
+    },
+    filterBadge: {
+      position: 'absolute',
+      top: scale(2),
+      right: scale(2),
+      backgroundColor: colors.primaryButton,
+      borderRadius: scale(8),
+      width: scale(16),
+      height: scale(16),
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    filterBadgeText: {
+      color: '#FFFFFF',
+      fontSize: scale(10),
+      fontWeight: '700',
+    },
+    activeFilterBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: scale(20),
+      paddingVertical: scale(10),
+      backgroundColor: colors.primaryButton + '15',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.primaryButton + '30',
+    },
+    activeFilterText: {
+      fontSize: scale(14),
+      color: colors.primaryButton,
+      fontWeight: '500',
+    },
+    // Filter dropdown menu styles (similar to HomeScreen header menu)
+    filterMenuOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 999,
+    },
+    filterMenuContainer: {
+      position: 'absolute',
+      top: scale(60),
+      right: scale(16),
+      backgroundColor: colors.cardBackground,
+      borderRadius: scale(12),
+      paddingVertical: scale(8),
+      minWidth: scale(200),
+      shadowColor: colors.primaryText,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      elevation: 8,
+      zIndex: 1000,
+    },
+    filterMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: scale(16),
+      paddingVertical: scale(12),
+      gap: scale(12),
+    },
+    filterMenuText: {
+      flex: 1,
+      fontSize: scale(14),
+      color: colors.primaryText,
+      fontWeight: '500',
+    },
+    filterMenuTextActive: {
+      color: colors.primaryButton,
+      fontWeight: '600',
+    },
+    filterMenuDivider: {
+      height: 1,
+      backgroundColor: colors.secondaryText,
+      opacity: 0.2,
+      marginHorizontal: scale(12),
+      marginVertical: scale(4),
+    },
+    // Legacy filter styles (kept for reference)
+    filterOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: scale(14),
+      paddingHorizontal: scale(12),
+      borderRadius: scale(10),
+      marginBottom: scale(8),
+      backgroundColor: colors.background,
+    },
+    filterOptionActive: {
+      backgroundColor: colors.primaryButton + '15',
+      borderWidth: 1,
+      borderColor: colors.primaryButton,
+    },
+    filterOptionText: {
+      flex: 1,
+      fontSize: scale(16),
+      color: colors.primaryText,
+      marginLeft: scale(12),
+    },
+    filterOptionTextActive: {
+      color: colors.primaryButton,
+      fontWeight: '600',
     },
   });

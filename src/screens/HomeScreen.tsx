@@ -63,8 +63,24 @@ interface OverallBalance {
   groupBalanceDetails: any[];
 }
 
+interface PrefillExpenseData {
+  description: string;
+  amount: number;
+  currency: string;
+  category: string;
+  date: string;
+  notes?: string;
+  receiptBase64?: string;
+}
+
 interface HomeScreenProps {
   navigation: any;
+  route?: {
+    params?: {
+      openCreateGroup?: boolean;
+      prefillExpense?: PrefillExpenseData;
+    };
+  };
 }
 
 // Helper function to calculate user's balance in a specific group
@@ -132,7 +148,7 @@ const calculateUserGroupBalance = (expenses: any[], userId: string, members: any
 };
 
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
+export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => {
   // --- STATUS BAR FIX ---
   // Assuming your theme context provides an isDarkMode boolean
   // If it provides a string like `mode`, you can do:
@@ -203,7 +219,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     totalExpenses: 0,
     expenseCount: 0,
   });
-  const [showPersonalExpenses, setShowPersonalExpenses] = useState(true);
+  // Store prefill expense data when coming from scan flow
+  const [pendingPrefillExpense, setPendingPrefillExpense] = useState<PrefillExpenseData | undefined>(undefined);
+  // Personal Expenses moved to bottom tab - removed from HomeScreen
+
+  // Handle route params for opening create group modal with prefilled expense
+  useEffect(() => {
+    if (route?.params?.openCreateGroup) {
+      setPendingPrefillExpense(route.params.prefillExpense);
+      setShowCreateGroup(true);
+      // Clear the params to prevent re-triggering
+      navigation.setParams({ openCreateGroup: undefined, prefillExpense: undefined });
+    }
+  }, [route?.params?.openCreateGroup, route?.params?.prefillExpense]);
 
   const loadGroupsFromFirebase = async () => {
     if (!user) {
@@ -425,7 +453,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const handleAddGroup = () => setShowCreateGroup(true);
   const handleCloseCreateGroup = () => setShowCreateGroup(false);
 
-  const handleSaveNewGroup = (newGroup: any) => {
+  const handleSaveNewGroup = (newGroup: any, prefillExpense?: PrefillExpenseData) => {
     // Convert Firebase group to legacy format for display
     const transformedGroup: Group = {
       id: newGroup.id,
@@ -440,10 +468,32 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       createdAt: newGroup.createdAt,
       totalExpenses: newGroup.totalExpenses,
     };
-    
+
     // Add to groups
     setGroups(prev => [transformedGroup, ...prev]);
     setShowCreateGroup(false);
+
+    // Clear pending prefill expense
+    setPendingPrefillExpense(undefined);
+
+    // If there's a prefilled expense from scan flow, navigate to AddExpense
+    if (prefillExpense) {
+      // Small delay to allow modal to close
+      setTimeout(() => {
+        navigation.navigate('AddExpense', {
+          group: transformedGroup,
+          prefillData: {
+            description: prefillExpense.description,
+            amount: prefillExpense.amount,
+            currency: prefillExpense.currency,
+            category: prefillExpense.category,
+            date: prefillExpense.date,
+            notes: prefillExpense.notes,
+            receiptBase64: prefillExpense.receiptBase64,
+          },
+        });
+      }, 300);
+    }
   };
 
   const handleSearch = () => {
@@ -609,23 +659,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <TouchableOpacity
               style={styles.headerMenuItem}
               onPress={() => {
-                setShowPersonalExpenses(!showPersonalExpenses);
-                setShowHeaderMenu(false);
-              }}
-            >
-              <MaterialIcons
-                name={showPersonalExpenses ? 'visibility-off' : 'visibility'}
-                size={scale(20)}
-                color={colors.primaryText}
-              />
-              <Text style={styles.headerMenuText}>
-                {showPersonalExpenses ? 'Hide' : 'Show'} Personal Expenses
-              </Text>
-            </TouchableOpacity>
-            <View style={styles.headerMenuDivider} />
-            <TouchableOpacity
-              style={styles.headerMenuItem}
-              onPress={() => {
                 setShowHeaderMenu(false);
                 setShowArchivedGroups(true);
               }}
@@ -714,30 +747,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             </View>
           )}
         </View>
-
-        {/* Personal Expenses Card */}
-        {showPersonalExpenses && (
-          <TouchableOpacity
-            style={styles.personalExpensesCard}
-            onPress={() => navigation.navigate('PersonalExpenses')}
-          >
-            <View style={styles.personalExpensesHeader}>
-              <View style={styles.personalExpensesIcon}>
-                <MaterialIcons name="receipt-long" size={scaledFontSize.lg} color={colors.primaryButtonText} />
-              </View>
-              <View style={styles.personalExpensesInfo}>
-                <Text style={styles.personalExpensesTitle}>Personal Expenses</Text>
-                <Text style={styles.personalExpensesSubtitle}>
-                  {personalExpensesSummary.expenseCount} expense{personalExpensesSummary.expenseCount !== 1 ? 's' : ''}
-                </Text>
-              </View>
-              <View style={styles.personalExpensesAmount}>
-                <Text style={styles.personalExpensesValue}>₹{personalExpensesSummary.totalExpenses.toFixed(0)}</Text>
-                <MaterialIcons name="chevron-right" size={scaledFontSize.lg} color={colors.primaryText} />
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
 
         {/* Groups List */}
         {groupsLoading ? (
@@ -841,7 +850,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
         {/* Create New Group Modal */}
         <Modal visible={showCreateGroup} animationType="slide" presentationStyle="pageSheet">
-          <CreateNewGroupScreen onClose={handleCloseCreateGroup} onSave={handleSaveNewGroup} />
+          <CreateNewGroupScreen onClose={handleCloseCreateGroup} onSave={handleSaveNewGroup} prefillExpense={pendingPrefillExpense} />
         </Modal>
 
         {/* Archived Groups Modal */}

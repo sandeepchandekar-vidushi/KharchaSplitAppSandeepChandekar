@@ -6,6 +6,21 @@ const activityController = require('../controllers/activityController');
 
 const router = express.Router();
 
+// Create activity
+router.post(
+  '/',
+  authenticate,
+  [
+    body('userId').notEmpty().withMessage('userId is required'),
+    body('activityType').notEmpty().withMessage('activityType is required'),
+    body('entityType').notEmpty().withMessage('entityType is required'),
+    body('entityId').notEmpty().withMessage('entityId is required'),
+    body('title').notEmpty().withMessage('title is required'),
+  ],
+  validate,
+  activityController.createActivity
+);
+
 // Get user activities
 router.get('/', authenticate, activityController.getUserActivities);
 

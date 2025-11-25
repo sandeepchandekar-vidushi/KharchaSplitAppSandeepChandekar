@@ -2046,6 +2046,11 @@
   resolved "https://registry.npmjs.org/@react-native-firebase/messaging/-/messaging-23.2.0.tgz"
   integrity sha512-k5pr7VWPvApqLjMEyrBLHtGSb9B7vV/wFkNwRJ36KRurSgwQoMIf5lNiD+8Liw0ROQ01Sfm4YRqHfKkc8xvsqg==
 
+"@react-native-ml-kit/text-recognition@^2.0.0":
+  version "2.0.0"
+  resolved "https://registry.npmjs.org/@react-native-ml-kit/text-recognition/-/text-recognition-2.0.0.tgz"
+  integrity sha512-RHefLYKndSyoDtgqHQptYQe+mftFk6/H30IQDenKX7PgMlJqoDejX+HdZ8gnP1kVNAt3iH+wyl/P6vCOkLMW9Q==
+
 "@react-native/assets-registry@0.81.1":
   version "0.81.1"
   resolved "https://registry.npmjs.org/@react-native/assets-registry/-/assets-registry-0.81.1.tgz"
@@ -6324,7 +6329,7 @@ react-native-vector-icons@^10.3.0:
     prop-types "^15.7.2"
     yargs "^16.1.1"
 
-react-native@*, "react-native@^0.0.0-0 || >=0.60 <1.0", "react-native@>= 0.61.5", react-native@>=0.14.0, react-native@>=0.59, react-native@>=0.60.0, react-native@>=0.70.0, react-native@0.81.1:
+react-native@*, "react-native@^0.0.0-0 || >=0.60 <1.0", "react-native@>= 0.61.5", react-native@>=0.14.0, react-native@>=0.59, react-native@>=0.60.0, "react-native@>=0.60.0-rc.0 <1.0.x", react-native@>=0.70.0, react-native@0.81.1:
   version "0.81.1"
   resolved "https://registry.npmjs.org/react-native/-/react-native-0.81.1.tgz"
   integrity sha512-k2QJzWc/CUOwaakmD1SXa4uJaLcwB2g2V9BauNIjgtXYYAeyFjx9jlNz/+wAEcHLg9bH5mgMdeAwzvXqjjh9Hg==
@@ -6377,7 +6382,7 @@ react-test-renderer@19.1.0:
     react-is "^19.1.0"
     scheduler "^0.26.0"
 
-react@*, "react@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", react@^19.1.0, "react@>= 16.9.0", "react@>= 18.2.0", react@>=16.8, react@>=17.0.0, react@>=18.1.0, react@19.1.0:
+react@*, "react@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", react@^19.1.0, "react@>= 16.9.0", "react@>= 18.2.0", react@>=16.8, react@>=16.8.1, react@>=17.0.0, react@>=18.1.0, react@19.1.0:
   version "19.1.0"
   resolved "https://registry.npmjs.org/react/-/react-19.1.0.tgz"
   integrity sha512-FS+XFBNvn3GTAWq26joslQgWNoFu08F4kl0J4CgdNKADkdSGXQyTCnKteIAJy96Br6YbpEU1LSzV5dYtjMkMDg==

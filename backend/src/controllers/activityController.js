@@ -24,9 +24,26 @@ const getUserActivities = async (req, res, next) => {
     }
 
     const offset = (page - 1) * limit;
-    const activities = await Activity.findByUserId(userId, parseInt(limit), offset);
+    const activitiesRaw = await Activity.findByUserId(userId, parseInt(limit), offset);
     const total = await Activity.countByUserId(userId);
     const unreadCount = await Activity.getUnreadCount(userId);
+
+    // Transform snake_case to camelCase for frontend
+    const activities = activitiesRaw.map(act => ({
+      id: act.id,
+      userId: act.user_id,
+      groupId: act.group_id,
+      activityType: act.activity_type,
+      entityType: act.entity_type,
+      entityId: act.entity_id,
+      title: act.title,
+      description: act.description,
+      metadata: act.metadata,
+      isRead: act.is_read,
+      createdAt: act.created_at,
+      actorName: act.actor_name,
+      groupName: act.group_name,
+    }));
 
     res.json({
       success: true,
@@ -228,6 +245,72 @@ const markGroupActivitiesAsRead = async (req, res, next) => {
 };
 
 /**
+ * Create a new activity
+ * POST /api/v1/activities
+ */
+const createActivity = async (req, res, next) => {
+  try {
+    const {
+      userId,
+      activityType,
+      entityType,
+      entityId,
+      title,
+      description,
+      metadata,
+      groupId,
+    } = req.body;
+
+    // Validate required fields
+    if (!userId || !activityType || !entityType || !entityId || !title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: userId, activityType, entityType, entityId, title',
+      });
+    }
+
+    // Users can only create activities for themselves
+    if (userId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        error: 'You can only create activities for yourself',
+      });
+    }
+
+    const activity = await Activity.create({
+      userId,
+      activityType,
+      entityType,
+      entityId,
+      title,
+      description,
+      metadata,
+      groupId,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Activity created successfully',
+      data: {
+        id: activity.id,
+        userId: activity.user_id,
+        groupId: activity.group_id,
+        activityType: activity.activity_type,
+        entityType: activity.entity_type,
+        entityId: activity.entity_id,
+        title: activity.title,
+        description: activity.description,
+        metadata: activity.metadata,
+        isRead: activity.is_read,
+        createdAt: activity.created_at,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Delete activity
  * DELETE /api/v1/activities/:id
  */
@@ -279,5 +362,6 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   markGroupActivitiesAsRead,
+  createActivity,
   deleteActivity,
 };
