@@ -1,5 +1,5 @@
-const jwt = require('jsonwebtoken');
-const { query } = require('../config/database');
+import jwt from 'jsonwebtoken';
+import { query  } from '../config/database.js';
 
 /**
  * Middleware to verify JWT token
@@ -96,7 +96,7 @@ const optionalAuth = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export {
   authenticate,
   optionalAuth,
 };

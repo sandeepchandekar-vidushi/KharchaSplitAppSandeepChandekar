@@ -1,23 +1,26 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const compression = require('compression');
-const rateLimit = require('express-rate-limit');
+import dotenv from 'dotenv';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 
-const { testConnection } = require('./config/database');
-const { errorHandler, notFound } = require('./middleware/errorHandler');
+import { testConnection } from './config/database.js';
+import { errorHandler, notFound } from './middleware/errorHandler.js';
 
 // Import routes
-const authRoutes = require('./routes/authRoutes');
-const userRoutes = require('./routes/userRoutes');
-const groupRoutes = require('./routes/groupRoutes');
-const expenseRoutes = require('./routes/expenseRoutes');
-const settlementRoutes = require('./routes/settlementRoutes');
-const personalExpenseRoutes = require('./routes/personalExpenseRoutes');
-const syncRoutes = require('./routes/syncRoutes');
-const activityRoutes = require('./routes/activityRoutes');
+import authRoutes from './routes/authRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import groupRoutes from './routes/groupRoutes.js';
+import expenseRoutes from './routes/expenseRoutes.js';
+import settlementRoutes from './routes/settlementRoutes.js';
+import personalExpenseRoutes from './routes/personalExpenseRoutes.js';
+import syncRoutes from './routes/syncRoutes.js';
+import activityRoutes from './routes/activityRoutes.js';
+import inviteRoutes from './routes/inviteRoutes.js';
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,14 +34,16 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting
+// Rate limiting - more permissive for mobile app usage patterns
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 1 * 60 * 1000, // 1 minute window
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 200, // 200 requests per minute
   message: {
     success: false,
     error: 'Too many requests, please try again later',
   },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 app.use('/api', limiter);
 
@@ -74,6 +79,7 @@ app.use(`/api/${API_VERSION}/settlements`, settlementRoutes);
 app.use(`/api/${API_VERSION}/personal-expenses`, personalExpenseRoutes);
 app.use(`/api/${API_VERSION}/sync`, syncRoutes);
 app.use(`/api/${API_VERSION}/activities`, activityRoutes);
+app.use(`/api/${API_VERSION}/invites`, inviteRoutes);
 
 // 404 handler
 app.use(notFound);
@@ -92,14 +98,13 @@ const startServer = async () => {
       process.exit(1);
     }
 
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, () => {
       console.log('');
       console.log('╔════════════════════════════════════════╗');
       console.log('║   🚀 KharchaSplit API Server          ║');
       console.log('╚════════════════════════════════════════╝');
       console.log('');
       console.log(`✅ Server running on port ${PORT}`);
-      console.log(`✅ Listening on 0.0.0.0 (all network interfaces)`);
       console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`✅ API Version: ${API_VERSION}`);
       console.log('');
@@ -138,4 +143,4 @@ process.on('SIGINT', () => {
 
 startServer();
 
-module.exports = app;
+export default app;

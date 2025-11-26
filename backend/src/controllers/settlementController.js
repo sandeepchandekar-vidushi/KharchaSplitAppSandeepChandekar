@@ -1,8 +1,9 @@
-const Settlement = require('../models/Settlement');
-const Group = require('../models/Group');
-const User = require('../models/User');
-const GroupService = require('../services/groupService');
-const ActivityService = require('../services/activityService');
+import Settlement from '../models/Settlement.js';
+import Group from '../models/Group.js';
+import User from '../models/User.js';
+import GroupService from '../services/groupService.js';
+import ActivityService from '../services/activityService.js';
+import { NotificationService } from '../services/notificationService.js';
 
 /**
  * Get settlements for a group
@@ -58,6 +59,16 @@ const createSettlement = async (req, res, next) => {
       });
     }
 
+    // Check for existing pending settlement between same users in same group
+    const existingPending = await Settlement.findPendingBetweenUsers(groupId, fromUserId, toUserId);
+    if (existingPending) {
+      return res.status(409).json({
+        success: false,
+        error: 'A pending settlement already exists between these users. Please wait for confirmation or cancel the existing one.',
+        existingSettlement: existingPending,
+      });
+    }
+
     // Get group and user names for activity log
     const group = await Group.findById(groupId);
     const fromUser = await User.findById(fromUserId);
@@ -72,7 +83,8 @@ const createSettlement = async (req, res, next) => {
       notes,
     });
 
-    // Log activity
+    // Log activity - use group currency as default instead of USD
+    const settlementCurrency = currency || group.currency || 'INR';
     await ActivityService.logSettlementCreated(
       settlement.id,
       groupId,
@@ -82,7 +94,7 @@ const createSettlement = async (req, res, next) => {
       fromUser.name,
       toUser.name,
       amount,
-      currency || 'USD'
+      settlementCurrency
     );
 
     res.status(201).json({
@@ -154,6 +166,20 @@ const confirmSettlement = async (req, res, next) => {
       existingSettlement.currency
     );
 
+    // Send push notification to group members
+    try {
+      await NotificationService.notifySettlementConfirmed(
+        existingSettlement.group_id,
+        existingSettlement,
+        fromUser.name,
+        toUser.name,
+        req.user.id // Exclude the confirmer from notification
+      );
+    } catch (notifError) {
+      console.error('[SettlementController] Error sending notification:', notifError);
+      // Don't fail the request if notification fails
+    }
+
     res.json({
       success: true,
       message: 'Settlement confirmed successfully',
@@ -183,7 +209,7 @@ const deleteSettlement = async (req, res, next) => {
     }
 
     // Only the payer or group admin can delete
-    const isAdmin = await require('../models/Group').isAdmin(settlement.group_id, req.user.id);
+    const isAdmin = await Group.isAdmin(settlement.group_id, req.user.id);
     const isPayer = settlement.from_user_id === req.user.id;
 
     if (!isAdmin && !isPayer) {
@@ -211,7 +237,7 @@ const deleteSettlement = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export default {
   getSettlements,
   createSettlement,
   confirmSettlement,

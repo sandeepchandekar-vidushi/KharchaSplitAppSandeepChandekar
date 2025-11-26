@@ -1,8 +1,8 @@
-const express = require('express');
-const { body } = require('express-validator');
-const { authenticate } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
-const expenseController = require('../controllers/expenseController');
+import express from 'express';
+import { body  } from 'express-validator';
+import { authenticate  } from '../middleware/auth.js';
+import { validate  } from '../middleware/validation.js';
+import expenseController from '../controllers/expenseController.js';
 
 const router = express.Router();
 
@@ -26,4 +26,4 @@ router.post(
 router.put('/:id', authenticate, expenseController.updateExpense);
 router.delete('/:id', authenticate, expenseController.deleteExpense);
 
-module.exports = router;
+export default router;

@@ -32,7 +32,7 @@ const sendOTPviaSMS = async (phoneNumber, otp) => {
   }
 
   // Example Twilio implementation:
-  // const twilio = require('twilio');
+  // import twilio from 'twilio.js';
   // const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
   // await client.messages.create({
   //   body: `Your KharchaSplit verification code is: ${otp}`,
@@ -43,7 +43,7 @@ const sendOTPviaSMS = async (phoneNumber, otp) => {
   return true;
 };
 
-module.exports = {
+export {
   generateOTP,
   getOTPExpiry,
   sendOTPviaSMS,

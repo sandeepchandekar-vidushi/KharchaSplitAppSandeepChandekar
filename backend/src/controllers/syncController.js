@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+import { query  } from '../config/database.js';
 
 /**
  * Bulk sync operation
@@ -148,7 +148,7 @@ async function handleDelete(table, recordId, userId) {
   return { success: true };
 }
 
-module.exports = {
+export default {
   syncData,
   getLastSyncTime,
 };

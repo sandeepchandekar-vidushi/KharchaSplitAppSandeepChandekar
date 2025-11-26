@@ -277,6 +277,51 @@ export const groupApi = {
       throw error;
     }
   },
+
+  /**
+   * Archive a group
+   */
+  async archiveGroup(groupId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.put(`/groups/${groupId}/archive`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Unarchive a group
+   */
+  async unarchiveGroup(groupId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.put(`/groups/${groupId}/unarchive`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Complete a group (archive with completion status)
+   */
+  async completeGroup(groupId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.put(`/groups/${groupId}/complete`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
 };
 
 export default groupApi;

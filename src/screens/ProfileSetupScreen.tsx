@@ -17,6 +17,7 @@ import { launchImageLibrary, launchCamera, ImagePickerResponse, MediaType } from
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { authApi } from '../services/api/authApi';
+import { inviteApi } from '../services/api/inviteApi';
 import { tokenStorage } from '../services/tokenStorage';
 import { NotificationPermissionHelper } from '../utils/NotificationPermissionHelper';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
@@ -55,16 +56,20 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
     }
 
     // Format code to uppercase and check basic format
+    // Backend generates 8-character hex codes (e.g., A3E4BFAB)
     const formattedCode = code.trim().toUpperCase();
-    if (!formattedCode.startsWith('KS') || formattedCode.length !== 8) {
+
+    // Check if it's a valid 8-character hex string
+    const hexPattern = /^[0-9A-F]{8}$/;
+    if (!hexPattern.test(formattedCode)) {
       setReferralValid(false);
       return;
     }
 
     setValidatingReferral(true);
     try {
-      const { firebaseService } = await import('../services/firebaseService');
-      const isValid = await firebaseService.validateReferralCode(formattedCode);
+      const response = await inviteApi.checkInviteStatus(formattedCode);
+      const isValid = response.success && response.data.status === 'pending';
       setReferralValid(isValid);
     } catch (error) {
       console.error('Error validating referral code:', error);
@@ -170,16 +175,11 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
           // Save auth token for persistence check (required for isLoggedIn)
           await userStorage.saveAuthToken(user.id);
 
-          // Apply referral code if provided and valid (still using Firebase for this feature)
+          // Apply referral code if provided and valid
           if (referralCode.trim() && referralValid === true) {
             try {
-              const { firebaseService } = await import('../services/firebaseService');
-              const applied = await firebaseService.applyReferralCode(user.id, referralCode.trim());
-              if (applied) {
-                Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
-              } else {
-                Alert.alert('Success', 'Profile created successfully! However, the referral code could not be applied.');
-              }
+              await inviteApi.acceptInvite(referralCode.trim());
+              Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
             } catch (referralError) {
               console.error('Error applying referral code:', referralError);
               Alert.alert('Success', 'Profile created successfully! However, there was an issue applying the referral code.');
@@ -206,58 +206,9 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
           }, 1000);
         }
       } catch (backendError: any) {
-        // Firebase fallback commented out for local testing
+        // No Firebase fallback - PostgreSQL backend is the only registration path
         console.error('Backend registration error:', backendError);
         throw backendError; // Re-throw to be caught by outer catch block
-
-        /* FIREBASE FALLBACK - COMMENTED OUT FOR LOCAL TESTING
-        console.log('Falling back to Firebase registration...');
-
-        const { firebaseService } = await import('../services/firebaseService');
-        const { userStorage } = await import('../services/userStorage');
-
-        const userData: any = {
-          phoneNumber,
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          name: fullName,
-        };
-
-        if (email.trim()) {
-          userData.email = email.trim();
-        }
-
-        if (profileImageBase64) {
-          userData.profileImage = profileImageBase64;
-        }
-
-        const userProfile = await firebaseService.createUser(userData);
-
-        // Apply referral code if provided
-        if (referralCode.trim() && referralValid === true) {
-          try {
-            const applied = await firebaseService.applyReferralCode(userProfile.id, referralCode.trim());
-            if (applied) {
-              Alert.alert('Success', `Profile created successfully! Referral code ${referralCode} has been applied.`);
-            } else {
-              Alert.alert('Success', 'Profile created successfully! However, the referral code could not be applied.');
-            }
-          } catch (referralError) {
-            console.error('Error applying referral code:', referralError);
-            Alert.alert('Success', 'Profile created successfully! However, there was an issue applying the referral code.');
-          }
-        } else {
-          Alert.alert('Success', 'Profile created successfully!');
-        }
-
-        await userStorage.saveUser(userProfile);
-        await userStorage.saveAuthToken(userProfile.id);
-        login(userProfile);
-
-        setTimeout(async () => {
-          await NotificationPermissionHelper.requestPermissionIfNeeded();
-        }, 1000);
-        */
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to create profile. Please try again.');
@@ -454,7 +405,7 @@ export const ProfileSetupScreen: React.FC<ProfileSetupScreenProps> = ({
                   referralValid === true && styles.inputValid,
                   referralValid === false && styles.inputInvalid
                 ]}
-                placeholder="Enter referral code (e.g., KS2A7B9K)"
+                placeholder="Enter referral code (e.g., A3E4BFAB)"
                 placeholderTextColor={colors.inputPlaceholder}
                 value={referralCode}
                 onChangeText={handleReferralCodeChange}

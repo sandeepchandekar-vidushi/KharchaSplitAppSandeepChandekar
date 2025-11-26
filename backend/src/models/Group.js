@@ -1,4 +1,4 @@
-const { query, transaction } = require('../config/database');
+import { query, transaction  } from '../config/database.js';
 
 class Group {
   /**
@@ -26,14 +26,14 @@ class Group {
   static async findByUserId(userId, limit = 20, offset = 0) {
     const result = await query(
       `SELECT g.id, g.name, g.description, g.cover_image_base64, g.created_by, g.created_at, g.updated_at,
-              COUNT(DISTINCT gm.user_id) as member_count,
+              COUNT(DISTINCT gm2.user_id) as member_count,
               COUNT(DISTINCT e.id) as expense_count,
               COALESCE(SUM(e.amount), 0) as total_expenses
        FROM groups g
-       INNER JOIN group_members gm ON g.id = gm.group_id
+       INNER JOIN group_members gm ON g.id = gm.group_id AND gm.user_id = $1 AND gm.deleted_at IS NULL
        LEFT JOIN group_members gm2 ON g.id = gm2.group_id AND gm2.deleted_at IS NULL
        LEFT JOIN expenses e ON g.id = e.group_id AND e.deleted_at IS NULL
-       WHERE gm.user_id = $1 AND gm.deleted_at IS NULL AND g.deleted_at IS NULL
+       WHERE g.deleted_at IS NULL
        GROUP BY g.id, g.name, g.description, g.cover_image_base64, g.created_by, g.created_at, g.updated_at
        ORDER BY g.updated_at DESC
        LIMIT $2 OFFSET $3`,
@@ -109,6 +109,28 @@ class Group {
   }
 
   /**
+   * Archive group
+   */
+  static async archive(id) {
+    const result = await query(
+      'UPDATE groups SET archived_at = NOW() WHERE id = $1 AND deleted_at IS NULL AND archived_at IS NULL RETURNING id',
+      [id]
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Unarchive group
+   */
+  static async unarchive(id) {
+    const result = await query(
+      'UPDATE groups SET archived_at = NULL WHERE id = $1 AND deleted_at IS NULL AND archived_at IS NOT NULL RETURNING id',
+      [id]
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
    * Get group members
    */
   static async getMembers(groupId) {
@@ -131,8 +153,50 @@ class Group {
 
   /**
    * Add member to group
+   * Handles re-adding previously removed members by reactivating their record
    */
   static async addMember(groupId, memberData) {
+    // First, check if there's a soft-deleted record for this user
+    const existingResult = await query(
+      `SELECT id, deleted_at FROM group_members
+       WHERE group_id = $1 AND user_id = $2`,
+      [groupId, memberData.userId]
+    );
+
+    if (existingResult.rows.length > 0) {
+      const existing = existingResult.rows[0];
+
+      if (existing.deleted_at === null) {
+        // Member is already active - return conflict error
+        throw new Error('User is already a member of this group');
+      }
+
+      // Reactivate the soft-deleted member
+      const reactivateResult = await query(
+        `UPDATE group_members
+         SET deleted_at = NULL,
+             name = $3,
+             phone_number = $4,
+             email = $5,
+             role = $6,
+             added_by = $7,
+             joined_at = NOW()
+         WHERE group_id = $1 AND user_id = $2
+         RETURNING *`,
+        [
+          groupId,
+          memberData.userId,
+          memberData.name,
+          memberData.phoneNumber || null,
+          memberData.email || null,
+          memberData.role || 'member',
+          memberData.addedBy
+        ]
+      );
+      return reactivateResult.rows[0];
+    }
+
+    // No existing record - insert new member
     const result = await query(
       `INSERT INTO group_members (group_id, user_id, name, phone_number, email, role, added_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -198,4 +262,4 @@ class Group {
   }
 }
 
-module.exports = Group;
+export default Group;

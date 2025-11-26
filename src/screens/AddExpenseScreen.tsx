@@ -23,11 +23,13 @@ import { launchImageLibrary } from "react-native-image-picker";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { typography } from '../utils/typography';
-import { firebaseService, GroupExpense } from '../services/firebaseService';
+import { groupApi } from '../services/api/groupApi';
+import { expenseApi } from '../services/api/expenseApi';
 import { useAuth } from '../context/AuthContext';
 import { pickReceiptImage, formatFileSize, validateReceiptImage } from '../utils/imageUtils';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { GroupExpense } from '../services/firebaseService';
 
 // Enable LayoutAnimation for Android
 if (
@@ -51,12 +53,23 @@ interface Member {
 
 
 
+interface PrefillData {
+  description?: string;
+  amount?: number;
+  currency?: string;
+  category?: string;
+  date?: string;
+  notes?: string;
+  receiptBase64?: string;
+}
+
 interface AddExpenseScreenProps {
-  route: { 
-    params?: { 
+  route: {
+    params?: {
       group?: { id: string; name: string };
       onReturn?: () => void;
-    } 
+      prefillData?: PrefillData;
+    }
   };
   navigation: any;
 }
@@ -159,6 +172,50 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
     };
   }, [group]);
 
+  // Handle prefillData from scan flow
+  useEffect(() => {
+    const prefillData = route.params?.prefillData;
+    if (prefillData) {
+      console.log('[AddExpense] Prefilling data from scan:', prefillData);
+
+      // Set description
+      if (prefillData.description) {
+        setDescription(prefillData.description);
+      }
+
+      // Set amount
+      if (prefillData.amount) {
+        setAmount(prefillData.amount.toString());
+      }
+
+      // Set category
+      if (prefillData.category) {
+        const matchedCategory = categories.find(
+          c => c.name.toLowerCase() === prefillData.category?.toLowerCase()
+        );
+        if (matchedCategory) {
+          setSelectedCategory(matchedCategory);
+        }
+      }
+
+      // Set date
+      if (prefillData.date) {
+        const parsedDate = new Date(prefillData.date);
+        if (!isNaN(parsedDate.getTime())) {
+          setExpenseDate(parsedDate);
+        }
+      }
+
+      // Set receipt image
+      if (prefillData.receiptBase64) {
+        setReceiptImage(prefillData.receiptBase64);
+        // Estimate size from base64
+        const sizeInBytes = (prefillData.receiptBase64.length * 3) / 4;
+        setReceiptSize(sizeInBytes);
+      }
+    }
+  }, [route.params?.prefillData]);
+
   // Set currency from group's locked currency (takes priority over user preference)
   useEffect(() => {
     if (groupCurrency) {
@@ -182,11 +239,13 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
 
     setMembersLoading(true);
     try {
-      // Load actual group data from Firebase
-      const groupData = await firebaseService.getGroupById(group.id);
-      if (!groupData) {
+      // Load actual group data from PostgreSQL
+      const response = await groupApi.getGroupById(group.id);
+      if (!response.success || !response.data) {
         throw new Error('Group not found');
       }
+
+      const groupData = response.data;
 
       // Set the group's locked currency - this takes priority over user preference
       if (groupData.currency) {
@@ -194,7 +253,7 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
         console.log('[AddExpense] Group currency loaded:', groupData.currency);
       }
 
-      const formattedMembers: Member[] = groupData.members.map((member) => ({
+      const formattedMembers: Member[] = (groupData.members || []).map((member: any) => ({
         id: member.userId,
         name: member.userId === user?.id ? 'You' : member.name,
         avatar: member.profileImage,
@@ -430,8 +489,41 @@ export const AddExpenseScreen: React.FC<AddExpenseScreenProps> = ({ route, navig
         isActive: true,
       };
 
-      // Create expense in Firebase
-      const createdExpense = await firebaseService.createGroupExpense(group.id, expense);
+      // Map split type to database-compatible values
+      const mapSplitType = (type: string): 'equal' | 'unequal' | 'percentage' | 'shares' => {
+        const mapping: { [key: string]: 'equal' | 'unequal' | 'percentage' | 'shares' } = {
+          'equal': 'equal',
+          'unequal': 'unequal',
+          'by percentage': 'percentage',
+          'by share': 'shares',
+          'percentage': 'percentage',
+          'shares': 'shares',
+        };
+        return mapping[type.toLowerCase()] || 'equal';
+      };
+
+      // Create expense in PostgreSQL
+      const expenseData = {
+        groupId: group.id,
+        description: expense.description,
+        amount: expense.amount,
+        currency: groupCurrency || selectedCurrency.code,
+        category: expense.category?.name,
+        paidById: expense.paidBy?.id || '',
+        paidByName: expense.paidBy?.name || 'Unknown',
+        splitType: mapSplitType(expense.splitType || 'Equal'),
+        receiptBase64: expense.receiptBase64,
+        expenseDate: expense.date,
+        participants: (expense.participants || []).map((p: any) => ({
+          userId: p?.id || p?.userId || '',
+          name: p?.name || 'Unknown',
+          amount: p?.amount || 0,
+          percentage: p?.percentage || null,
+          shares: p?.shares || null,
+        })),
+      };
+
+      const response = await expenseApi.createExpense(expenseData);
 
       // Clear base64 image from memory after successful upload
       setReceiptImage(null);

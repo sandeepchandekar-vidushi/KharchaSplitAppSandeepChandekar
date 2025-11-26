@@ -95,13 +95,13 @@ service cloud.firestore {
 1. **Update your code**:
    - Increment version in `android/app/build.gradle`:
      ```gradle
-     versionCode 3
-     versionName "1.0.2"
+     versionCode 5
+     versionName "1.2.1"
      ```
    - Update `src/services/versionCheckService.ts`:
      ```typescript
-     private readonly CURRENT_VERSION_CODE = 3;
-     private readonly CURRENT_VERSION_NAME = '1.0.2';
+     private readonly CURRENT_VERSION_CODE = 5;
+     private readonly CURRENT_VERSION_NAME = '1.2.1';
      ```
 
 2. **Build and upload to Play Store**

@@ -1,7 +1,7 @@
-const express = require('express');
-const { body } = require('express-validator');
-const { validate } = require('../middleware/validation');
-const authController = require('../controllers/authController');
+import express from 'express';
+import { body } from 'express-validator';
+import { validate } from '../middleware/validation.js';
+import authController from '../controllers/authController.js';
 
 const router = express.Router();
 
@@ -103,4 +103,4 @@ router.post(
   authController.simpleLogin
 );
 
-module.exports = router;
+export default router;

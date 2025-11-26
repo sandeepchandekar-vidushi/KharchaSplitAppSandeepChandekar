@@ -1,8 +1,8 @@
-const express = require('express');
-const { body } = require('express-validator');
-const { authenticate } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
-const settlementController = require('../controllers/settlementController');
+import express from 'express';
+import { body  } from 'express-validator';
+import { authenticate  } from '../middleware/auth.js';
+import { validate  } from '../middleware/validation.js';
+import settlementController from '../controllers/settlementController.js';
 
 const router = express.Router();
 
@@ -24,4 +24,4 @@ router.post(
 router.patch('/:id/confirm', authenticate, settlementController.confirmSettlement);
 router.delete('/:id', authenticate, settlementController.deleteSettlement);
 
-module.exports = router;
+export default router;

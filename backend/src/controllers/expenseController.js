@@ -1,7 +1,7 @@
-const Expense = require('../models/Expense');
-const Group = require('../models/Group');
-const GroupService = require('../services/groupService');
-const ActivityService = require('../services/activityService');
+import Expense from '../models/Expense.js';
+import Group from '../models/Group.js';
+import GroupService from '../services/groupService.js';
+import ActivityService from '../services/activityService.js';
 
 /**
  * Get expenses for a group
@@ -221,7 +221,7 @@ const deleteExpense = async (req, res, next) => {
     }
 
     // Verify user is admin of the group or the payer
-    const isAdmin = await require('../models/Group').isAdmin(expense.group_id, req.user.id);
+    const isAdmin = await Group.isAdmin(expense.group_id, req.user.id);
     const isPayer = expense.paid_by_id === req.user.id;
 
     if (!isAdmin && !isPayer) {
@@ -249,7 +249,7 @@ const deleteExpense = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export default {
   getExpenses,
   getExpense,
   createExpense,

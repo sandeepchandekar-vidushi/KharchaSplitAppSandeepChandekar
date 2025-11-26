@@ -1,7 +1,8 @@
 {
   "name": "kharchasplit-backend",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "KharchaSplit PostgreSQL Backend API",
+  "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

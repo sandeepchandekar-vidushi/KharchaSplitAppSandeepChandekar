@@ -1,4 +1,4 @@
-const Activity = require('../models/Activity');
+import Activity from '../models/Activity.js';
 
 /**
  * Get activities for a user
@@ -354,7 +354,7 @@ const deleteActivity = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export default {
   getUserActivities,
   getGroupActivities,
   getActivity,

@@ -1,8 +1,8 @@
-const express = require('express');
-const { body } = require('express-validator');
-const { authenticate } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
-const activityController = require('../controllers/activityController');
+import express from 'express';
+import { body  } from 'express-validator';
+import { authenticate  } from '../middleware/auth.js';
+import { validate  } from '../middleware/validation.js';
+import activityController from '../controllers/activityController.js';
 
 const router = express.Router();
 
@@ -51,4 +51,4 @@ router.patch('/group/:groupId/read-all', authenticate, activityController.markGr
 // Delete activity
 router.delete('/:id', authenticate, activityController.deleteActivity);
 
-module.exports = router;
+export default router;

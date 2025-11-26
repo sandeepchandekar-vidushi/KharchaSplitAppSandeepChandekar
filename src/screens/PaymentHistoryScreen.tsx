@@ -17,8 +17,11 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, Settlement } from '../services/firebaseService';
+// import { firebaseService, Settlement } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { Settlement } from '../services/firebaseService';
 import { useFocusEffect } from '@react-navigation/native';
+import { settlementApi } from '../services/api/settlementApi';
+import { groupApi } from '../services/api/groupApi';
 
 interface PaymentHistoryItem {
   id: string;
@@ -59,31 +62,50 @@ export const PaymentHistoryScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     try {
-      
-      // Get all settlements for the user
-      const settlements = await firebaseService.getAllUserSettlements(user.id);
-      
-      // Get all user groups to get group names
-      const userGroups = await firebaseService.getUserGroups(user.id);
-      const groupMap = new Map(userGroups.map(group => [group.id, group.name]));
-      
+      // Get all user groups to get group names and settlements
+      const groupsResponse = await groupApi.getUserGroups(user.id);
+
+      if (!groupsResponse.success) {
+        throw new Error('Failed to load groups');
+      }
+
+      const userGroups = groupsResponse.data;
+      const groupMap = new Map(userGroups.map((group: any) => [group.id, group.name]));
+
+      // Get settlements for all groups
+      const settlementPromises = userGroups.map((group: any) =>
+        settlementApi.getGroupSettlements(group.id).catch(() => ({ success: false, data: [] }))
+      );
+
+      const settlementResponses = await Promise.all(settlementPromises);
+
+      // Flatten all settlements from all groups
+      const settlements = settlementResponses
+        .filter((response: any) => response.success)
+        .flatMap((response: any) =>
+          response.data.map((settlement: any) => ({
+            ...settlement,
+            groupId: settlement.groupId,
+          }))
+        );
+
       // Transform settlements to payment history items
-      const payments: PaymentHistoryItem[] = settlements.map(settlement => {
-        const isUserPayer = settlement.fromUserId === user.id;
-        const isUserReceiver = settlement.toUserId === user.id;
-        
+      const payments: PaymentHistoryItem[] = settlements.map((settlement: any) => {
+        const isUserPayer = settlement?.fromUserId === user.id;
+        const isUserReceiver = settlement?.toUserId === user.id;
+
         return {
-          id: settlement.id || '',
+          id: settlement?.id || '',
           type: isUserPayer ? 'paid' : 'received',
-          amount: settlement.amount,
-          date: new Date(settlement.createdAt),
-          groupName: groupMap.get(settlement.groupId) || 'Unknown Group',
-          groupId: settlement.groupId,
-          fromUser: isUserPayer ? 'You' : settlement.fromUserName,
-          toUser: isUserReceiver ? 'You' : settlement.toUserName,
-          fromUserId: settlement.fromUserId,
-          toUserId: settlement.toUserId,
-          status: settlement.status,
+          amount: settlement?.amount || 0,
+          date: new Date(settlement?.createdAt || Date.now()),
+          groupName: groupMap.get(settlement?.groupId) || 'Unknown Group',
+          groupId: settlement?.groupId || '',
+          fromUser: isUserPayer ? 'You' : (settlement?.fromUserName || 'Unknown'),
+          toUser: isUserReceiver ? 'You' : (settlement?.toUserName || 'Unknown'),
+          fromUserId: settlement?.fromUserId || '',
+          toUserId: settlement?.toUserId || '',
+          status: settlement?.status || 'pending',
           settlement,
         };
       });
@@ -163,7 +185,7 @@ export const PaymentHistoryScreen: React.FC<Props> = ({ navigation }) => {
       let shareText = `💰 Payment Transaction - KharchaSplit\n\n`;
       shareText += `📄 Transaction Details:\n`;
       shareText += `• ${action}: ${otherUser}\n`;
-      shareText += `• Amount: ${amountSymbol}₹${payment.amount.toFixed(2)}\n`;
+      shareText += `• Amount: ${amountSymbol}₹${Number(payment.amount || 0).toFixed(2)}\n`;
       shareText += `• Group: ${payment.groupName}\n`;
       shareText += `• Status: ${statusText}\n`;
       shareText += `• Date: ${formatDate(payment.date)}\n`;
@@ -367,7 +389,7 @@ export const PaymentHistoryScreen: React.FC<Props> = ({ navigation }) => {
                       styles.amountText,
                       { color: payment.type === 'paid' ? colors.error : colors.success },
                     ]}>
-                    {payment.type === 'paid' ? '-' : '+'}₹{payment.amount.toFixed(0)}
+                    {payment.type === 'paid' ? '-' : '+'}₹{Number(payment.amount || 0).toFixed(0)}
                   </Text>
                   <TouchableOpacity
                     style={styles.shareButton}

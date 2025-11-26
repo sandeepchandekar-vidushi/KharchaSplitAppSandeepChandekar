@@ -1,4 +1,4 @@
-const Activity = require('../models/Activity');
+import Activity from '../models/Activity.js';
 
 /**
  * Activity Service
@@ -11,6 +11,8 @@ class ActivityService {
   static ACTIVITY_TYPES = {
     GROUP_CREATED: 'group_created',
     GROUP_UPDATED: 'group_updated',
+    GROUP_DELETED: 'group_deleted',
+    GROUP_ARCHIVED: 'group_archived',
     MEMBER_ADDED: 'member_added',
     MEMBER_REMOVED: 'member_removed',
     MEMBER_ROLE_UPDATED: 'member_role_updated',
@@ -61,6 +63,38 @@ class ActivityService {
       title: 'Group updated',
       description: `Updated group "${groupName}"`,
       metadata: { groupName, changes },
+    });
+  }
+
+  /**
+   * Log group deleted activity
+   */
+  static async logGroupDeleted(groupId, userId, groupName) {
+    return await Activity.create({
+      groupId,
+      userId,
+      activityType: this.ACTIVITY_TYPES.GROUP_DELETED,
+      entityType: this.ENTITY_TYPES.GROUP,
+      entityId: groupId,
+      title: 'Group deleted',
+      description: `Deleted group "${groupName}"`,
+      metadata: { groupName },
+    });
+  }
+
+  /**
+   * Log group archived activity
+   */
+  static async logGroupArchived(groupId, userId, groupName) {
+    return await Activity.create({
+      groupId,
+      userId,
+      activityType: this.ACTIVITY_TYPES.GROUP_ARCHIVED,
+      entityType: this.ENTITY_TYPES.GROUP,
+      entityId: groupId,
+      title: 'Group archived',
+      description: `Archived group "${groupName}"`,
+      metadata: { groupName },
     });
   }
 
@@ -209,4 +243,4 @@ class ActivityService {
   }
 }
 
-module.exports = ActivityService;
+export default ActivityService;

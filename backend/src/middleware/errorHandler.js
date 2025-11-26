@@ -48,7 +48,7 @@ const notFound = (req, res) => {
   });
 };
 
-module.exports = {
+export {
   errorHandler,
   notFound,
 };

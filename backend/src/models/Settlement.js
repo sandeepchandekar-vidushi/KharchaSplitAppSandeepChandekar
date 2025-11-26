@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+import { query  } from '../config/database.js';
 
 class Settlement {
   /**
@@ -37,6 +37,29 @@ class Settlement {
   }
 
   /**
+   * Find existing pending settlement between two users in a group
+   * Used to prevent duplicate settlements
+   */
+  static async findPendingBetweenUsers(groupId, fromUserId, toUserId) {
+    const result = await query(
+      `SELECT s.*,
+              u1.name as from_user_name,
+              u2.name as to_user_name
+       FROM settlements s
+       LEFT JOIN users u1 ON s.from_user_id = u1.id
+       LEFT JOIN users u2 ON s.to_user_id = u2.id
+       WHERE s.group_id = $1
+       AND s.from_user_id = $2
+       AND s.to_user_id = $3
+       AND s.status = 'pending'
+       AND s.deleted_at IS NULL
+       LIMIT 1`,
+      [groupId, fromUserId, toUserId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
    * Create new settlement
    */
   static async create(settlementData) {
@@ -51,7 +74,7 @@ class Settlement {
         settlementData.fromUserId,
         settlementData.toUserId,
         settlementData.amount,
-        settlementData.currency || 'USD',
+        settlementData.currency || 'INR', // Default to INR to match frontend
         settlementData.status || 'pending',
         settlementData.notes || null
       ]
@@ -101,4 +124,4 @@ class Settlement {
   }
 }
 
-module.exports = Settlement;
+export default Settlement;

@@ -128,7 +128,13 @@ export const authService = {
   },
 
   async checkUserExists(phoneNumber: string): Promise<boolean> {
-    const { firebaseService } = await import('./firebaseService');
-    return await firebaseService.checkUserExists(phoneNumber);
+    try {
+      const { userApi } = await import('./api/userApi');
+      const response = await userApi.checkRegisteredUsers([phoneNumber]);
+      return response.success && response.data.registered.length > 0;
+    } catch (error) {
+      console.error('Error checking if user exists:', error);
+      return false;
+    }
   },
 };

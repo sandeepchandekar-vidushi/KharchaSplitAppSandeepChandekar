@@ -1306,9 +1306,9 @@ class FirebaseService {
       }
 
       // Verify all participants are members of the group
-      const groupMemberIds = group.members.map(m => m.userId);
-      const invalidParticipants = expenseData.participants.filter(
-        p => !groupMemberIds.includes(p.id)
+      const groupMemberIds = group.members.map((m: any) => m.userId);
+      const invalidParticipants = (expenseData.participants || []).filter(
+        (p: any) => !groupMemberIds.includes(p?.id || p?.userId)
       );
 
       if (invalidParticipants.length > 0) {
@@ -1349,8 +1349,8 @@ class FirebaseService {
       // Create activity log for expense creation
       try {
         await this.createActivity({
-          userId: expenseData.paidBy.id,
-          userName: expenseData.paidBy.name,
+          userId: expenseData.paidBy?.id || expenseData.paidById || '',
+          userName: expenseData.paidBy?.name || expenseData.paidByName || 'Unknown',
           type: 'expense_added',
           title: `Added expense: ${expenseData.description}`,
           description: `₹${expenseData.amount.toFixed(0)} expense added in ${group.name}`,
@@ -1536,13 +1536,16 @@ class FirebaseService {
 
       // Process each expense
       expenses.forEach(expense => {
-        const payerId = expense.paidBy.id;
+        // Handle both nested paidBy object and flat paidById field
+        const payerId = expense.paidBy?.id || expense.paidById || '';
+        if (!payerId) return; // Skip if no payer info
 
-        expense.participants.forEach(participant => {
-          if (participant.id !== payerId) {
+        (expense.participants || []).forEach((participant: any) => {
+          const participantId = participant?.id || participant?.userId || '';
+          if (participantId && participantId !== payerId) {
             // Participant owes payer
-            const currentBalance = balances.get(participant.id)?.get(payerId) || 0;
-            balances.get(participant.id)?.set(payerId, currentBalance + participant.amount);
+            const currentBalance = balances.get(participantId)?.get(payerId) || 0;
+            balances.get(participantId)?.set(payerId, currentBalance + (participant?.amount || 0));
           }
         });
       });

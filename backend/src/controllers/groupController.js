@@ -1,6 +1,7 @@
-const Group = require('../models/Group');
-const GroupService = require('../services/groupService');
-const ActivityService = require('../services/activityService');
+import Group from '../models/Group.js';
+import GroupService from '../services/groupService.js';
+import ActivityService from '../services/activityService.js';
+import { NotificationService } from '../services/notificationService.js';
 
 /**
  * Get user's groups
@@ -20,9 +21,45 @@ const getGroups = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const groups = await Group.findByUserId(userId, parseInt(limit), offset);
 
+    // Fetch members for each group
+    const groupsWithMembers = await Promise.all(
+      groups.map(async (group) => {
+        const members = await Group.getMembers(group.id);
+
+        // Transform members to camelCase format for frontend compatibility
+        const transformedMembers = members.map(member => ({
+          userId: member.user_id,
+          name: member.name,
+          phoneNumber: member.phone_number,
+          email: member.email,
+          role: member.role,
+          profileImage: member.profile_image_base64,
+          joinedAt: member.joined_at,
+          addedBy: member.added_by,
+        }));
+
+        return {
+          id: group.id,
+          name: group.name,
+          description: group.description,
+          coverImageBase64: group.cover_image_base64,
+          currency: group.currency,
+          createdBy: group.created_by,
+          createdAt: group.created_at,
+          updatedAt: group.updated_at,
+          archivedAt: group.archived_at,
+          isArchived: !!group.archived_at,
+          memberCount: parseInt(group.member_count) || 0,
+          expenseCount: parseInt(group.expense_count) || 0,
+          totalExpenses: parseFloat(group.total_expenses) || 0,
+          members: transformedMembers,
+        };
+      })
+    );
+
     res.json({
       success: true,
-      data: groups,
+      data: groupsWithMembers,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -57,14 +94,38 @@ const getGroup = async (req, res, next) => {
     // Get members
     const members = await Group.getMembers(id);
 
+    // Transform members to camelCase format for frontend compatibility
+    const transformedMembers = members.map(member => ({
+      userId: member.user_id,
+      name: member.name,
+      phoneNumber: member.phone_number,
+      email: member.email,
+      role: member.role,
+      profileImage: member.profile_image_base64,
+      joinedAt: member.joined_at,
+      addedBy: member.added_by,
+    }));
+
     // Get balances
     const balances = await GroupService.calculateBalances(id);
 
     res.json({
       success: true,
       data: {
-        ...group,
-        members,
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        currency: group.currency,
+        createdBy: group.created_by,
+        coverImageBase64: group.cover_image_base64,
+        createdAt: group.created_at,
+        updatedAt: group.updated_at,
+        archivedAt: group.archived_at,
+        isArchived: !!group.archived_at,
+        memberCount: parseInt(group.member_count) || 0,
+        expenseCount: parseInt(group.expense_count) || 0,
+        totalExpenses: parseFloat(group.total_expenses) || 0,
+        members: transformedMembers,
         balances,
       },
     });
@@ -168,6 +229,16 @@ const deleteGroup = async (req, res, next) => {
     // Verify user is admin
     await GroupService.validateAdminAccess(id, req.user.id);
 
+    // Get group details before deletion for activity log
+    const group = await Group.findById(id);
+
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found',
+      });
+    }
+
     const deleted = await Group.delete(id);
 
     if (!deleted) {
@@ -176,6 +247,9 @@ const deleteGroup = async (req, res, next) => {
         error: 'Group not found',
       });
     }
+
+    // Log activity
+    await ActivityService.logGroupDeleted(id, req.user.id, group.name);
 
     res.json({
       success: true,
@@ -270,8 +344,17 @@ const removeGroupMember = async (req, res, next) => {
   try {
     const { id, userId } = req.params;
 
-    // Verify user is admin
-    await GroupService.validateAdminAccess(id, req.user.id);
+    // Allow users to remove themselves (leave group) without being admin
+    // For removing others, require admin access
+    const isRemovingSelf = req.user.id === userId;
+
+    if (!isRemovingSelf) {
+      // Verify user is admin to remove others
+      await GroupService.validateAdminAccess(id, req.user.id);
+    } else {
+      // For leaving, just verify user is a member
+      await GroupService.validateGroupAccess(id, req.user.id);
+    }
 
     // Get group and member info for activity log
     const group = await Group.findById(id);
@@ -292,12 +375,32 @@ const removeGroupMember = async (req, res, next) => {
       await ActivityService.logMemberRemoved(id, req.user.id, group.name, member.name);
     }
 
+    // Send push notification
+    try {
+      if (isRemovingSelf) {
+        // User left the group - notify other members
+        await NotificationService.notifyMemberLeft(id, group.name, userId, member?.name || 'A member');
+      } else {
+        // User was removed - notify the removed user and other members
+        await NotificationService.notifyMemberRemoved(id, group.name, userId, member?.name || 'A member', req.user.id);
+      }
+    } catch (notifError) {
+      console.error('[GroupController] Error sending member removal notification:', notifError);
+      // Don't fail the request if notification fails
+    }
+
     res.json({
       success: true,
-      message: 'Member removed successfully',
+      message: isRemovingSelf ? 'Successfully left the group' : 'Member removed successfully',
     });
   } catch (error) {
     if (error.message === 'User is not an admin of this group') {
+      return res.status(403).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    if (error.message === 'User is not a member of this group') {
       return res.status(403).json({
         success: false,
         error: error.message,
@@ -351,7 +454,152 @@ const updateMemberRole = async (req, res, next) => {
   }
 };
 
-module.exports = {
+/**
+ * Archive group
+ * PUT /api/v1/groups/:id/archive
+ */
+const archiveGroup = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Verify user is admin
+    await GroupService.validateAdminAccess(id, req.user.id);
+
+    // Get group details before archiving for activity log
+    const group = await Group.findById(id);
+
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found',
+      });
+    }
+
+    const archived = await Group.archive(id);
+
+    if (!archived) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found or already archived',
+      });
+    }
+
+    // Log activity
+    await ActivityService.logGroupArchived(id, req.user.id, group.name);
+
+    // Send push notification to group members
+    try {
+      await NotificationService.notifyGroupArchived(id, group.name, req.user.id);
+    } catch (notifError) {
+      console.error('[GroupController] Error sending archive notification:', notifError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Group archived successfully',
+    });
+  } catch (error) {
+    if (error.message === 'User is not an admin of this group') {
+      return res.status(403).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Unarchive group
+ * PUT /api/v1/groups/:id/unarchive
+ */
+const unarchiveGroup = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Verify user is admin
+    await GroupService.validateAdminAccess(id, req.user.id);
+
+    const unarchived = await Group.unarchive(id);
+
+    if (!unarchived) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found or not archived',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Group unarchived successfully',
+    });
+  } catch (error) {
+    if (error.message === 'User is not an admin of this group') {
+      return res.status(403).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Complete group (archive with completion status)
+ * PUT /api/v1/groups/:id/complete
+ */
+const completeGroup = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Verify user is admin
+    await GroupService.validateAdminAccess(id, req.user.id);
+
+    // Get group details before completing for activity log
+    const group = await Group.findById(id);
+
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found',
+      });
+    }
+
+    const completed = await Group.archive(id);
+
+    if (!completed) {
+      return res.status(404).json({
+        success: false,
+        error: 'Group not found or already completed',
+      });
+    }
+
+    // Log activity
+    await ActivityService.logGroupArchived(id, req.user.id, group.name);
+
+    // Send push notification to group members
+    try {
+      await NotificationService.notifyGroupCompleted(id, group.name, req.user.id);
+    } catch (notifError) {
+      console.error('[GroupController] Error sending complete notification:', notifError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Group completed successfully',
+    });
+  } catch (error) {
+    if (error.message === 'User is not an admin of this group') {
+      return res.status(403).json({
+        success: false,
+        error: error.message,
+      });
+    }
+    next(error);
+  }
+};
+
+export default {
   getGroups,
   getGroup,
   createGroup,
@@ -361,4 +609,7 @@ module.exports = {
   addGroupMember,
   removeGroupMember,
   updateMemberRole,
+  archiveGroup,
+  unarchiveGroup,
+  completeGroup,
 };

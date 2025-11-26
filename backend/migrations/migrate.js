@@ -1,12 +1,17 @@
-const fs = require('fs');
-const path = require('path');
-const { pool } = require('../src/config/database');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { pool } from '../src/config/database.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // List of migration files in order
 const migrations = [
   '001_initial_schema.sql',
   '002_add_currency_to_groups.sql',
   '003_add_preferred_currency_to_users.sql',
+  '004_fix_duplicate_phone_numbers.sql',
 ];
 
 async function runMigration() {

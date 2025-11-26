@@ -16,29 +16,28 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, ReferralData } from '../services/firebaseService';
-import { userStorage } from '../services/userStorage';
+// import { firebaseService, ReferralData } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { inviteApi, MyInvitesResponse } from '../services/api/inviteApi';
 
 type Props = {
   onClose: () => void;
 };
 
+interface ReferralData {
+  userId: string;
+  referralCode: string;
+  totalReferrals: number;
+  successfulReferrals: number;
+  pendingReferrals: number;
+  referralHistory: any[];
+}
+
 export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
   const { colors } = useTheme();
-  const { user, login } = useAuth();
+  const { user } = useAuth();
   const [referralData, setReferralData] = useState<ReferralData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  // Generate a default referral code when Firebase data is not available
-  const generateDefaultReferralCode = useCallback((): string => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = 'KS'; // Prefix for KharchaSplit
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }, []);
 
   const loadReferralData = useCallback(async () => {
     if (!user) {
@@ -48,97 +47,60 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
 
     setLoading(true);
 
-    // TEMPORARY: Skip Firebase referral collection completely and use fallback approach
-
     try {
-      // Check if user already has a referral code in their profile
-      let referralCode = user.referralCode;
+      // Load invites from PostgreSQL backend
+      const response = await inviteApi.getMyInvites();
 
-      // If user doesn't have a referral code, generate one and save to Firebase
-      if (!referralCode) {
-        referralCode = generateDefaultReferralCode();
+      if (response.success) {
+        const invitesData: MyInvitesResponse = response.data;
 
-        try {
-          // Save the generated referral code to user profile in Firebase
-          const updatedUser = await firebaseService.updateUser(user.id, { referralCode });
+        // Get referral code from first invite or generate placeholder
+        const referralCode = invitesData.invites.length > 0
+          ? invitesData.invites[0].inviteCode
+          : user.referralCode || 'KS-INVITE';
 
-          // Update local storage and AuthContext to include the new referral code
-          await userStorage.saveUser(updatedUser);
-          login(updatedUser);
-        } catch (updateError) {
-          console.error('Failed to save referral code to Firebase:', updateError);
-          // Continue with local display even if Firebase save fails
-        }
+        // Map invites to referral history format
+        const referralHistory = invitesData.invites.map((invite) => ({
+          id: invite.id,
+          referredUserId: invite.id,
+          referredUserName: invite.phoneNumber, // Display phone number as name
+          referredUserPhone: invite.phoneNumber,
+          createdAt: invite.invitedAt,
+          status: invite.status, // 'pending' | 'accepted' | 'expired'
+          updatedAt: invite.acceptedAt || invite.invitedAt,
+        }));
+
+        const convertedData: ReferralData = {
+          userId: user.id,
+          referralCode,
+          totalReferrals: invitesData.totalInvites,
+          successfulReferrals: invitesData.acceptedInvites,
+          pendingReferrals: invitesData.pendingInvites,
+          referralHistory,
+        };
+
+        setReferralData(convertedData);
+      } else {
+        throw new Error('Failed to load invites');
       }
+    } catch (error) {
+      console.error('Error loading referral data:', error);
 
-      // Try to load referral history directly from users collection as fallback
-      let referralHistory: any[] = [];
-      let totalReferrals = 0;
-      let successfulReferrals = 0;
-      let pendingReferrals = 0;
-
-      try {
-        const referredUsersSnapshot = await firebaseService.usersCollection
-          .where('referredBy', '==', user.id)
-          .where('isActive', '==', true)
-          .get();
-
-        referredUsersSnapshot.docs.forEach((doc) => {
-          const userData = doc.data() as any;
-          referralHistory.push({
-            id: doc.id,
-            referredUserId: doc.id,
-            referredUserName: userData.firstName || userData.name || 'New User',
-            referredUserPhone: userData.phoneNumber,
-            createdAt: userData.createdAt,
-            status: 'completed', // All existing users are considered completed
-            updatedAt: userData.updatedAt,
-          });
-        });
-
-        // Calculate statistics from actual data
-        totalReferrals = referralHistory.length;
-        successfulReferrals = referralHistory.filter(r => r.status === 'completed').length;
-        pendingReferrals = referralHistory.filter(r => r.status === 'pending').length;
-
-      } catch (historyError) {
-        console.error('Failed to load referral history from users collection:', historyError);
-        // Keep default empty values
-      }
-
-      // Create default referral data with the referral code and actual history (if loaded)
-      const defaultReferralData: ReferralData = {
-        userId: user.id,
-        referralCode,
-        totalReferrals,
-        successfulReferrals,
-        pendingReferrals,
-        referralHistory,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      setReferralData(defaultReferralData);
-    } catch (fallbackError) {
-      console.error('Error in fallback referral data loading:', fallbackError);
-
-      // Even if everything fails, show basic referral code
+      // Fallback: Show basic referral code even if loading fails
       const basicReferralData: ReferralData = {
         userId: user.id,
-        referralCode: user.referralCode || generateDefaultReferralCode(),
+        referralCode: user.referralCode || 'KS-INVITE',
         totalReferrals: 0,
         successfulReferrals: 0,
         pendingReferrals: 0,
         referralHistory: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
       setReferralData(basicReferralData);
     } finally {
       setLoading(false);
     }
-  }, [user, generateDefaultReferralCode, login]);
+  }, [user]);
 
   useEffect(() => {
     loadReferralData();
@@ -150,7 +112,6 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
       await loadReferralData();
     } catch (error) {
       console.error('Error during refresh:', error);
-      // loadReferralData already handles errors by setting default data
     } finally {
       setRefreshing(false);
     }
@@ -171,10 +132,10 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
     if (!referralData) return;
 
     try {
-      const shareMessage = `🎉 Join me on KharchaSplit!\n\nUse my referral code: ${referralData.referralCode}`;
+      const shareMessage = `🎉 Join me on KharchaSplit!\n\nUse my invite code: ${referralData.referralCode}\n\nDownload the app and start splitting expenses easily!`;
       await Share.share({
         message: shareMessage,
-        title: 'Join KharchaSplit with my referral code!',
+        title: 'Join KharchaSplit with my invite code!',
       });
     } catch (error) {
       console.error('Error sharing referral code:', error);
@@ -192,11 +153,11 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed':
+      case 'accepted':
         return colors.success;
       case 'pending':
         return colors.warning;
-      case 'failed':
+      case 'expired':
         return colors.error;
       default:
         return colors.secondaryText;
@@ -205,11 +166,11 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed':
+      case 'accepted':
         return 'checkmark-circle';
       case 'pending':
         return 'time';
-      case 'failed':
+      case 'expired':
         return 'close-circle';
       default:
         return 'help-circle';
@@ -246,7 +207,7 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
             {/* Referral Code Card */}
             <View style={styles.codeCard}>
               <View style={styles.codeHeader}>
-                <Text style={styles.codeTitle}>Your Referral Code</Text>
+                <Text style={styles.codeTitle}>Your Invite Code</Text>
                 <View style={styles.giftIcon}>
                   <MaterialIcons
                     name="card-giftcard"
@@ -285,13 +246,13 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
                 <Text style={styles.statNumber}>
                   {referralData.totalReferrals}
                 </Text>
-                <Text style={styles.statLabel}>Total Referrals</Text>
+                <Text style={styles.statLabel}>Total Invites</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statNumber, { color: colors.success }]}>
                   {referralData.successfulReferrals}
                 </Text>
-                <Text style={styles.statLabel}>Successful</Text>
+                <Text style={styles.statLabel}>Accepted</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statNumber, { color: colors.warning }]}>
@@ -303,7 +264,7 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
 
             {/* Referral History */}
             <View style={styles.historyCard}>
-              <Text style={styles.sectionTitle}>Referral History</Text>
+              <Text style={styles.sectionTitle}>Invite History</Text>
 
               {referralData.referralHistory.length === 0 ? (
                 <View style={styles.emptyContainer}>
@@ -312,9 +273,9 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
                     size={64}
                     color={colors.secondaryText}
                   />
-                  <Text style={styles.emptyText}>No referrals yet</Text>
+                  <Text style={styles.emptyText}>No invites sent yet</Text>
                   <Text style={styles.emptySubtext}>
-                    Share your code to start earning referrals!
+                    Share your invite code to start inviting friends!
                   </Text>
                 </View>
               ) : (
@@ -325,7 +286,7 @@ export const ReferralSystemScreen: React.FC<Props> = ({ onClose }) => {
                         {referral.referredUserName || 'New User'}
                       </Text>
                       <Text style={styles.referralDate}>
-                        Joined {formatDate(referral.createdAt)}
+                        Invited {formatDate(referral.createdAt)}
                       </Text>
                     </View>
                     <View style={styles.referralStatus}>

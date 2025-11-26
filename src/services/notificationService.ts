@@ -130,6 +130,22 @@ export class NotificationService {
         title = '✅ Group Closed';
         body = activity.title;
         break;
+      case 'group_archived':
+        title = '📦 Group Archived';
+        body = activity.title;
+        break;
+      case 'member_removed':
+        title = '👤 Member Removed';
+        body = activity.title;
+        break;
+      case 'member_left':
+        title = '👋 Member Left';
+        body = activity.title;
+        break;
+      case 'member_added':
+        title = '👤 New Member';
+        body = activity.title;
+        break;
       default:
         title = '🔔 KharchaSplit';
         body = activity.title;

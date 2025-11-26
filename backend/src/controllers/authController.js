@@ -1,7 +1,7 @@
-const bcrypt = require('bcryptjs');
-const { query } = require('../config/database');
-const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
-const { generateOTP, getOTPExpiry, sendOTPviaSMS } = require('../utils/otp');
+import bcrypt from 'bcryptjs';
+import { query  } from '../config/database.js';
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken  } from '../utils/jwt.js';
+import { generateOTP, getOTPExpiry, sendOTPviaSMS  } from '../utils/otp.js';
 
 /**
  * Register new user
@@ -334,7 +334,7 @@ const simpleLogin = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export default {
   register,
   sendOTP,
   verifyOTP,

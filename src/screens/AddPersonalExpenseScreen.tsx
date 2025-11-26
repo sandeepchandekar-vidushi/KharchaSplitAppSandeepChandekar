@@ -19,7 +19,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { SafeAreaView } from "react-native-safe-area-context";
 import { typography } from '../utils/typography';
-import { firebaseService, PersonalExpense } from '../services/firebaseService';
+// import { firebaseService, PersonalExpense } from '../services/firebaseService'; // MIGRATED to PostgreSQL
 import { useAuth } from '../context/AuthContext';
 import { pickReceiptImage, formatFileSize, validateReceiptImage } from '../utils/imageUtils';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
@@ -225,27 +225,8 @@ export const AddPersonalExpenseScreen: React.FC<AddPersonalExpenseScreenProps> =
           }
         }
       } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        const expense: Omit<PersonalExpense, 'id'> = {
-          userId: user.id,
-          description: description,
-          amount: totalAmount,
-          category: {
-            ...selectedCategory,
-            name: categoryName,
-          },
-          ...(receiptImage?.startsWith('data:') && { receiptBase64: receiptImage }),
-          date: expenseDate.toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          isActive: true,
-          ...(notes.trim() && { notes: notes.trim() }),
-        };
-
-        await firebaseService.createPersonalExpense(expense);
-        console.log('Personal expense created successfully in Firebase');
+        console.error('PostgreSQL backend error:', backendError.message);
+        throw backendError; // Re-throw to be caught by outer catch
       }
 
       Alert.alert("Success", "Personal expense saved successfully", [

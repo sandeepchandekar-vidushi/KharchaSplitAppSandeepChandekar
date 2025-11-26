@@ -18,7 +18,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, Activity, PersonalExpense } from '../services/firebaseService';
+// import { firebaseService, Activity, PersonalExpense } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { Activity, PersonalExpense } from '../services/firebaseService';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -26,6 +27,7 @@ import { ActivityScreenSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activityApi } from '../services/api/activityApi';
 import { personalExpenseApi } from '../services/api/personalExpenseApi';
+import { groupApi } from '../services/api/groupApi';
 
 // Filter types
 type ActivityFilter = 'all' | 'groups' | 'personal' | 'other';
@@ -94,58 +96,37 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
         let loadedActivities: ExtendedActivity[] = [];
         let personalExpenseActivities: ExtendedActivity[] = [];
 
-        // Load group/user activities
-        try {
-          console.log('Loading activities from PostgreSQL backend...');
-          const response = await activityApi.getUserActivities(user.id, 1, 50);
+        // Load group/user activities from PostgreSQL
+        console.log('Loading activities from PostgreSQL backend...');
+        const response = await activityApi.getUserActivities(user.id, 1, 50);
 
-          if (response.success) {
-            // Map API response to Activity format
-            // Check if activity is a personal expense activity by activityType
-            loadedActivities = response.data.map(act => {
-              const isPersonalExpenseActivity = act.activityType === 'personal_expense_added';
-              return {
-                id: act.id,
-                userId: act.userId,
-                userName: '',
-                type: act.activityType as Activity['type'],
-                title: act.title,
-                description: act.description,
-                groupId: act.groupId,
-                groupName: act.metadata?.groupName,
-                expenseId: act.metadata?.expenseId,
-                expenseDescription: act.metadata?.expenseDescription,
-                amount: act.metadata?.amount,
-                relatedUserId: act.metadata?.relatedUserId,
-                relatedUserName: act.metadata?.relatedUserName,
-                createdAt: act.createdAt,
-                metadata: act.metadata,
-                isPersonalExpense: isPersonalExpenseActivity,
-                // Store the personal expense ID from entityId for later verification
-                personalExpenseId: isPersonalExpenseActivity ? act.entityId : undefined,
-              };
-            });
-            console.log(`Loaded ${loadedActivities.length} activities from PostgreSQL`);
-          }
-        } catch (backendError: any) {
-          console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-          // Fallback to Firebase
-          const userGroups = await firebaseService.getUserGroups(user.id);
-          const groupIds = userGroups.map(group => group.id);
-
-          // Get both user activities and group activities
-          const [userActivities, groupActivities] = await Promise.all([
-            firebaseService.getUserActivities(user.id, 30),
-            firebaseService.getGroupActivities(groupIds, 20)
-          ]);
-
-          // Combine and deduplicate activities
-          const allActivities = [...userActivities, ...groupActivities];
-          loadedActivities = allActivities.filter((activity, index, self) =>
-            index === self.findIndex(a => a.id === activity.id)
-          ).map(act => ({ ...act, isPersonalExpense: false }));
-          console.log(`Loaded ${loadedActivities.length} activities from Firebase`);
+        if (response.success) {
+          // Map API response to Activity format
+          // Check if activity is a personal expense activity by activityType
+          loadedActivities = response.data.map(act => {
+            const isPersonalExpenseActivity = act.activityType === 'personal_expense_added';
+            return {
+              id: act.id,
+              userId: act.userId,
+              userName: '',
+              type: act.activityType as Activity['type'],
+              title: act.title,
+              description: act.description,
+              groupId: act.groupId,
+              groupName: act.metadata?.groupName,
+              expenseId: act.metadata?.expenseId,
+              expenseDescription: act.metadata?.expenseDescription,
+              amount: act.metadata?.amount,
+              relatedUserId: act.metadata?.relatedUserId,
+              relatedUserName: act.metadata?.relatedUserName,
+              createdAt: act.createdAt,
+              metadata: act.metadata,
+              isPersonalExpense: isPersonalExpenseActivity,
+              // Store the personal expense ID from entityId for later verification
+              personalExpenseId: isPersonalExpenseActivity ? act.entityId : undefined,
+            };
+          });
+          console.log(`Loaded ${loadedActivities.length} activities from PostgreSQL`);
         }
 
         // For personal expense activities, check which expenses still exist
@@ -425,16 +406,10 @@ export const ActivityScreen: React.FC<ActivityScreenProps> = ({ navigation }) =>
                 Vibration.vibrate(100);
               }
 
-              // Try PostgreSQL backend first, fallback to Firebase
-              try {
-                console.log('Deleting activity from PostgreSQL backend...');
-                await activityApi.deleteActivity(activity.id!);
-                console.log('Activity deleted successfully from PostgreSQL');
-              } catch (backendError: any) {
-                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-                await firebaseService.deleteActivity(activity.id!);
-                console.log('Activity deleted successfully from Firebase');
-              }
+              // Delete activity from PostgreSQL
+              console.log('Deleting activity from PostgreSQL backend...');
+              await activityApi.deleteActivity(activity.id!);
+              console.log('Activity deleted successfully from PostgreSQL');
               
               // Animate out with fade effect
               const activityElement = activities.find(a => a.id === activity.id);

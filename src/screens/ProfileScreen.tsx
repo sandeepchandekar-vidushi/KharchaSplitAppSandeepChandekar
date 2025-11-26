@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   StatusBar,
   FlatList,
+  useWindowDimensions,
 } from 'react-native';
 import { EditProfileScreen } from './EditProfileScreen';
 import { ThemeSettingsScreen } from './ThemeSettingsScreen';
@@ -24,7 +25,7 @@ import { getProfileImageUri } from '../utils/imageUtils';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { userStorage } from '../services/userStorage';
-import { firebaseService } from '../services/firebaseService';
+// import { firebaseService } from '../services/firebaseService'; // MIGRATED to PostgreSQL
 import { userApi } from '../services/api/userApi';
 
 // Currency options
@@ -54,6 +55,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   const { colors } = useTheme();
   const { user, logout, isLoading, login } = useAuth();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  const baseWidth = 375;
+  const scale = (size: number) => (screenWidth / baseWidth) * size;
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [showReferralSystem, setShowReferralSystem] = useState(false);
@@ -74,18 +78,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     setShowCurrencyModal(false);
 
     try {
-      // Try PostgreSQL backend first
-      try {
-        await userApi.updateUser(user.id, {
-          preferredCurrency: currencyCode,
-        });
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-        // Fallback to Firebase
-        await firebaseService.updateUser(user.id, {
-          preferredCurrency: currencyCode,
-        });
-      }
+      // Update via PostgreSQL backend
+      await userApi.updateUser(user.id, {
+        preferredCurrency: currencyCode,
+      });
 
       // Update local user
       const updatedUser = {
@@ -156,7 +152,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     },
   ];
 
-  const styles = createStyles(colors);
+  const styles = createStyles(colors, scale);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -319,20 +315,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   );
 };
 
-const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
+const createStyles = (colors: ReturnType<typeof useTheme>['colors'], scale: (size: number) => number) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     header: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingHorizontal: scale(20),
+      paddingVertical: scale(16),
       backgroundColor: colors.cardBackground,
-      borderBottomWidth: 0,
-      borderBottomColor: colors.secondaryText,
+      borderBottomWidth: 0.5,
+      borderBottomColor: colors.secondaryText + '20',
     },
-    headerTitle: { fontSize: 24, fontWeight: 'bold', color: colors.primaryText },
+    headerTitle: { fontSize: scale(24), fontWeight: '700', color: colors.primaryText },
     scrollView: { flex: 1 },
     profileSection: {
       backgroundColor: colors.cardBackground,

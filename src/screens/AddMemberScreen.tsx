@@ -16,7 +16,7 @@ import Contacts from 'react-native-contacts';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTheme } from '../context/ThemeContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService } from '../services/firebaseService';
+// import { firebaseService } from '../services/firebaseService';
 import { useAuth } from '../context/AuthContext';
 import { Share } from 'react-native';
 import { s, vs, ms } from '../utils/deviceDimensions';
@@ -24,6 +24,7 @@ import { contactsCacheService } from '../services/contactsCacheService';
 import { formatPhoneForDisplay } from '../utils/phoneFormatter';
 import { inviteApi } from '../services/api/inviteApi';
 import { userApi } from '../services/api/userApi';
+import { groupApi } from '../services/api/groupApi';
 
 interface Group {
   id: string;
@@ -249,7 +250,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
 
         // Check if user is already in contacts list
         const existingContact = filteredContacts.find(c => {
-          const contactPhone = normalizePhoneNumber(c.phoneNumbers[0].number);
+          const contactPhone = normalizePhoneNumber(c.phoneNumbers?.[0]?.number || '');
           return contactPhone === phoneNumber;
         });
 
@@ -268,9 +269,10 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         }
 
         // Check if user is already in the group
-        const currentGroup = await firebaseService.getGroupById(group.id);
-        if (currentGroup) {
-          const existingMember = currentGroup.members.find(m =>
+        const currentGroupResponse = await groupApi.getGroupById(group.id);
+        if (currentGroupResponse.success && currentGroupResponse.data) {
+          const currentGroup = currentGroupResponse.data;
+          const existingMember = currentGroup.members?.find((m: any) =>
             normalizePhoneNumber(m.phoneNumber) === phoneNumber
           );
           if (existingMember) {
@@ -281,7 +283,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         }
 
         // Create a contact object from the registered user
-        const nameParts = registeredUser.name.split(' ');
+        const nameParts = (registeredUser?.name || '').split(' ');
         const searchedContact: FilteredContact = {
           recordID: `phone-search-${registeredUser.userId}`,
           displayName: registeredUser.name,
@@ -338,16 +340,17 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       console.log('[AddMember] Processing', contactsList.length, 'contacts with cache optimization');
 
       // Get current group members to exclude them
-      const currentGroup = await firebaseService.getGroupById(group.id);
-      if (!currentGroup) {
+      const currentGroupResponse = await groupApi.getGroupById(group.id);
+      if (!currentGroupResponse.success || !currentGroupResponse.data) {
         console.error('[AddMember] Group not found for ID:', group.id);
         Alert.alert('Error', 'Group not found. Please go back and try again.');
         return;
       }
 
-      const existingMemberPhones = new Set(currentGroup.members.map(member =>
+      const currentGroup = currentGroupResponse.data;
+      const existingMemberPhones = new Set(currentGroup.members?.map((member: any) =>
         normalizePhoneNumber(member.phoneNumber)
-      ));
+      ) || []);
       console.log('[AddMember] Existing members:', existingMemberPhones.size);
 
       // Process contacts and separate cached from uncached
@@ -361,7 +364,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         if (contact.phoneNumbers?.length > 0 && !processedContactIds.has(contact.recordID)) {
           processedContactIds.add(contact.recordID);
 
-          const rawPhone = contact.phoneNumbers[0].number;
+          const rawPhone = contact.phoneNumbers?.[0]?.number || '';
           const primaryPhone = normalizePhoneNumber(rawPhone);
 
           // Debug first 5 contacts
@@ -415,38 +418,19 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         uncached: uncachedPhones.length,
       });
 
-      // Fetch only uncached contacts from Firebase
+      // Fetch only uncached contacts from backend
       if (uncachedPhones.length > 0) {
-        console.log('[AddMember] Fetching', uncachedPhones.length, 'uncached from Firebase');
+        console.log('[AddMember] Fetching', uncachedPhones.length, 'uncached from backend');
         console.log('[AddMember] Sample uncached phones (format +91XXXXXXXXXX):', uncachedPhones.slice(0, 5));
 
-        let registeredUsers = await firebaseService.getUsersByPhoneNumbers(uncachedPhones);
-        console.log('[AddMember] Found', registeredUsers.length, 'registered users with +91 format');
-
-        // COMMENTED OUT: Phone format fallbacks - Backend should standardize phone format
-        // // If no results, try without +91 (just 10 digits)
-        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-        //   console.log('[AddMember] Trying 10-digit format without +91...');
-        //   const phonesWithout91 = uncachedPhones.map(p => p.replace('+91', ''));
-        //   console.log('[AddMember] Sample 10-digit phones:', phonesWithout91.slice(0, 5));
-        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWithout91);
-        //   console.log('[AddMember] Found', registeredUsers.length, 'registered users with 10-digit format');
-        // }
-
-        // // If still no results, try with 91 prefix (no +)
-        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-        //   console.log('[AddMember] Trying 91XXXXXXXXXX format (no +)...');
-        //   const phonesWith91NoPlus = uncachedPhones.map(p => p.replace('+', ''));
-        //   console.log('[AddMember] Sample 91XXXXXXXXXX phones:', phonesWith91NoPlus.slice(0, 5));
-        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWith91NoPlus);
-        //   console.log('[AddMember] Found', registeredUsers.length, 'registered users with 91XXXXXXXXXX format');
-        // }
+        const checkResponse = await userApi.checkRegisteredUsers(uncachedPhones);
+        const registeredUsers = checkResponse.success ? checkResponse.data.registered : [];
+        console.log('[AddMember] Found', registeredUsers.length, 'registered users');
 
         if (registeredUsers.length > 0) {
-          console.log('[AddMember] Sample registered:', registeredUsers.slice(0, 3).map(u => ({ phone: u.phoneNumber, name: u.name })));
+          console.log('[AddMember] Sample registered:', registeredUsers.slice(0, 3).map((u: any) => ({ phone: u.phoneNumber, name: u.name })));
         } else {
-          console.warn('[AddMember] ⚠️ NO REGISTERED USERS FOUND! Check Firebase phone number format.');
-          console.warn('[AddMember] Expected one of: +91XXXXXXXXXX, XXXXXXXXXX, or 91XXXXXXXXXX');
+          console.warn('[AddMember] No registered users found in this batch');
         }
 
         const registeredPhones = new Set<string>();
@@ -455,14 +439,20 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         // Build cache entries
         const cacheEntries: Array<{ phoneNumber: string; isRegistered: boolean; userProfile?: any }> = [];
 
-        registeredUsers.forEach(userProfile => {
+        registeredUsers.forEach((userProfile: any) => {
           const normalizedPhone = normalizePhoneNumber(userProfile.phoneNumber);
           registeredPhones.add(normalizedPhone);
-          userProfileMap[normalizedPhone] = userProfile;
+          userProfileMap[normalizedPhone] = {
+            id: userProfile.userId,
+            name: userProfile.name,
+            phoneNumber: userProfile.phoneNumber,
+            email: userProfile.email,
+            profileImage: userProfile.profileImage,
+          };
           cacheEntries.push({
             phoneNumber: normalizedPhone,
             isRegistered: true,
-            userProfile,
+            userProfile: userProfileMap[normalizedPhone],
           });
         });
 
@@ -483,8 +473,8 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
         // Update contacts with Firebase results
         let updatedCount = 0;
         validContacts.forEach(contact => {
-          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
-          if (registeredPhones.has(primaryPhone)) {
+          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
+          if (primaryPhone && registeredPhones.has(primaryPhone)) {
             contact.isRegistered = true;
             contact.userProfile = userProfileMap[primaryPhone];
             updatedCount++;
@@ -496,7 +486,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       // Filter out current user - check both userProfile (from Firebase) and cached data
       const currentUserPhone = user?.phoneNumber ? normalizePhoneNumber(user.phoneNumber) : null;
       const finalContacts = validContacts.filter(contact => {
-        const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
+        const primaryPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
 
         // Check if this is the current user's phone number
         if (currentUserPhone && primaryPhone === currentUserPhone) {
@@ -649,7 +639,7 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
       for (const contact of selectedMembers) {
         // Only add registered members (already validated in handleSelectMember)
         if (contact.isRegistered && contact.phoneNumbers && contact.phoneNumbers.length > 0) {
-          const phoneNumber = normalizePhoneNumber(contact.phoneNumbers[0].number);
+          const phoneNumber = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
           // Use the phone number from userProfile if available (more reliable)
           const formattedPhone = contact.userProfile?.phoneNumber ||
             (phoneNumber.length === 10 ? `+91${phoneNumber}` : `+${phoneNumber}`);
@@ -662,7 +652,12 @@ export const AddMemberScreen: React.FC<Props> = ({ route, navigation }) => {
           });
 
           try {
-            const result = await firebaseService.addGroupMember(group.id, formattedPhone);
+            const result = await groupApi.addGroupMember(group.id, {
+              userId: contact.userProfile?.id || '',
+              name: contact.userProfile?.name || contact.displayName || 'Unknown',
+              phoneNumber: formattedPhone,
+              email: contact.userProfile?.email || '',
+            });
             console.log(`[AddMember] Successfully added ${contact.displayName}`);
             results.push({
               contact,

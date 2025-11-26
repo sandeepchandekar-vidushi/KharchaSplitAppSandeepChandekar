@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+import jwt from 'jsonwebtoken';
 
 /**
  * Generate access token
@@ -37,7 +37,7 @@ const verifyRefreshToken = (token) => {
   }
 };
 
-module.exports = {
+export {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,

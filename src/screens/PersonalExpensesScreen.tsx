@@ -13,11 +13,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { firebaseService, PersonalExpense } from '../services/firebaseService';
+// import { firebaseService, PersonalExpense } from '../services/firebaseService'; // MIGRATED to PostgreSQL
 import { typography } from '../utils/typography';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useFocusEffect } from '@react-navigation/native';
-import { personalExpenseApi } from '../services/api/personalExpenseApi';
+import { personalExpenseApi, PersonalExpense } from '../services/api/personalExpenseApi';
 
 interface PersonalExpensesScreenProps {
   navigation: any;
@@ -88,11 +88,8 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
           console.log(`Loaded ${personalExpenses.length} personal expenses from PostgreSQL`);
         }
       } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        personalExpenses = await firebaseService.getPersonalExpenses(user.id);
-        console.log(`Loaded ${personalExpenses.length} personal expenses from Firebase`);
+        console.error('PostgreSQL backend error:', backendError.message);
+        throw backendError; // Re-throw to be caught by outer catch
       }
 
       setExpenses(personalExpenses);
@@ -134,20 +131,15 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
           style: 'destructive',
           onPress: async () => {
             try {
-              // Try PostgreSQL backend first
-              try {
-                console.log('Deleting personal expense from PostgreSQL backend...');
-                await personalExpenseApi.deletePersonalExpense(expenseId);
-                console.log('Personal expense deleted successfully from PostgreSQL');
-              } catch (backendError: any) {
-                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-                await firebaseService.deletePersonalExpense(expenseId);
-                console.log('Personal expense deleted successfully from Firebase');
-              }
+              // Use PostgreSQL backend
+              console.log('Deleting personal expense from PostgreSQL backend...');
+              await personalExpenseApi.deletePersonalExpense(expenseId);
+              console.log('Personal expense deleted successfully from PostgreSQL');
 
               await loadExpenses();
               Alert.alert('Success', 'Expense deleted successfully');
             } catch (error) {
+              console.error('Error deleting expense:', error);
               Alert.alert('Error', 'Failed to delete expense');
             }
           }
@@ -174,7 +166,6 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <View style={{ width: scaledFontSize.xl }} />
           <Text style={styles.headerTitle}>Personal Expenses</Text>
           <View style={{ width: scaledFontSize.xl }} />
         </View>
@@ -188,15 +179,8 @@ export const PersonalExpensesScreen: React.FC<PersonalExpensesScreenProps> = ({ 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={{ width: scaledFontSize.xl }} />
         <Text style={styles.headerTitle}>Personal Expenses</Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('AddPersonalExpense', {
-            onReturn: () => loadExpenses()
-          })}
-        >
-          <Ionicons name="add" size={scaledFontSize.xl} color={colors.primaryText} />
-        </TouchableOpacity>
+        <View style={{ width: scaledFontSize.xl }} />
       </View>
 
       {/* Summary Card */}
@@ -290,13 +274,15 @@ const createStyles = (
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: scale(16),
-    paddingVertical: scale(12),
+    paddingHorizontal: scale(20),
+    paddingVertical: scale(16),
     backgroundColor: colors.cardBackground,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.secondaryText + '20',
   },
   headerTitle: {
-    fontSize: fonts.header,
-    fontWeight: "600",
+    fontSize: scale(24),
+    fontWeight: "700",
     color: colors.primaryText,
   },
   loadingContainer: {

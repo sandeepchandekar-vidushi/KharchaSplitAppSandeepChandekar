@@ -2,6 +2,7 @@ import messaging from '@react-native-firebase/messaging';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { firebaseService } from './firebaseService';
+import { userApi } from './api/userApi';
 
 const FCM_TOKEN_KEY = 'fcm_token';
 
@@ -52,7 +53,14 @@ export class FCMTokenManager {
         // Save to AsyncStorage
         await AsyncStorage.setItem(FCM_TOKEN_KEY, newToken);
 
-        // Save to Firebase user document
+        // Save to PostgreSQL via API (primary storage for notifications)
+        try {
+          await userApi.updateFcmToken(userId, newToken);
+        } catch (apiError) {
+          console.log('ℹ️ Failed to save FCM token to PostgreSQL:', apiError);
+        }
+
+        // Also save to Firebase user document for backup/compatibility
         await firebaseService.updateUser(userId, { fcmToken: newToken });
 
         return newToken;
@@ -110,7 +118,14 @@ export class FCMTokenManager {
         // Save to AsyncStorage
         await AsyncStorage.setItem(FCM_TOKEN_KEY, currentToken);
 
-        // Save to Firebase user document
+        // Save to PostgreSQL via API (primary storage for notifications)
+        try {
+          await userApi.updateFcmToken(userId, currentToken);
+        } catch (apiError) {
+          console.log('ℹ️ Failed to save FCM token to PostgreSQL:', apiError);
+        }
+
+        // Also save to Firebase user document for backup/compatibility
         await firebaseService.updateUser(userId, { fcmToken: currentToken });
 
         return currentToken;

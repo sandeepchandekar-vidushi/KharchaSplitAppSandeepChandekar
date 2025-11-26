@@ -15,7 +15,8 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { launchImageLibrary, ImageLibraryOptions } from 'react-native-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, Group as FirebaseGroup, GroupMember } from '../services/firebaseService';
+// import { firebaseService, Group as FirebaseGroup, GroupMember } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { Group as FirebaseGroup, GroupMember } from '../services/firebaseService';
 import { useAuth } from '../context/AuthContext';
 import { ensureDataUri } from '../utils/imageUtils';
 import { groupApi } from '../services/api/groupApi';
@@ -107,9 +108,9 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
 
     setLoading(true);
     try {
-
-      // Load real Firebase data
-      const groupDetails = await firebaseService.getGroupById(group.id);
+      // Load group data from PostgreSQL backend
+      const groupResponse = await groupApi.getGroupById(group.id);
+      const groupDetails = groupResponse.success ? groupResponse.data : null;
       
       if (groupDetails) {
         setFirebaseGroup(groupDetails);
@@ -125,11 +126,11 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
         setOriginalData(loadedData);
         
         setGroupMembers(groupDetails.members || []);
-        
+
         // Check if current user is admin
-        const currentUserMember = groupDetails.members.find(m => m.userId === user?.id);
+        const currentUserMember = (groupDetails.members || []).find((m: any) => m?.userId === user?.id);
         setIsGroupAdmin(
-          groupDetails.createdBy === user?.id || 
+          groupDetails.createdBy === user?.id ||
           currentUserMember?.role === 'admin'
         );
         
@@ -239,9 +240,9 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
         style: 'destructive',
         onPress: async () => {
           if (!group?.id) return;
-          
+
           try {
-            await firebaseService.removeGroupMember(group.id, member.userId);
+            await groupApi.removeGroupMember(group.id, member.userId);
             setGroupMembers(prev => prev.filter(m => m.userId !== member.userId));
             Alert.alert('Success', `${member.name} has been removed from the group`);
           } catch (error) {
@@ -285,20 +286,12 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
         updateData.coverImageBase64 = null;
       }
 
-      // Try PostgreSQL backend first
-      try {
-        console.log('Updating group in PostgreSQL backend...');
-        const response = await groupApi.updateGroup(group.id, updateData);
+      // Update group in PostgreSQL backend
+      console.log('Updating group in PostgreSQL backend...');
+      const response = await groupApi.updateGroup(group.id, updateData);
 
-        if (response.success) {
-          console.log('Group updated successfully in PostgreSQL');
-        }
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        await firebaseService.updateGroup(group.id, updateData);
-        console.log('Group updated successfully in Firebase');
+      if (response.success) {
+        console.log('Group updated successfully in PostgreSQL');
       }
 
       // Clear base64 image from memory after successful upload
@@ -326,8 +319,8 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
     }
   };
 
-  const filteredMembers = groupMembers.filter(member =>
-    member.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredMembers = groupMembers.filter((member: any) =>
+    (member?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const styles = StyleSheet.create({
@@ -588,7 +581,7 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
           <View style={styles.statItem}>
             <Text style={styles.statLabel}>Total Expenses:</Text>
             <Text style={styles.statValue}>
-              {getCurrencySymbol(firebaseGroup?.currency)}{firebaseGroup?.totalExpenses?.toFixed(0) || 0}
+              {getCurrencySymbol(firebaseGroup?.currency)}{Number(firebaseGroup?.totalExpenses || (firebaseGroup as any)?.total_expenses || 0).toFixed(0)}
             </Text>
           </View>
           {/* Currency - Read Only (locked after group creation) */}
@@ -612,26 +605,26 @@ export const ManageGroupScreen: React.FC<ManageGroupScreenProps> = ({ route, nav
         {/* Group Members */}
         <View style={styles.membersSection}>
           <Text style={styles.sectionTitle}>Group Members ({groupMembers.length})</Text>
-          {filteredMembers.map(member => (
-            <View key={member.userId} style={styles.memberItem}>
-              {member.profileImage ? (
+          {filteredMembers.map((member: any) => (
+            <View key={member?.userId || Math.random().toString()} style={styles.memberItem}>
+              {member?.profileImage ? (
                 <Image source={{ uri: ensureDataUri(member.profileImage) || '' }} style={styles.memberAvatar} />
               ) : (
                 <View style={styles.memberAvatarPlaceholder}>
                   <Text style={styles.memberAvatarText}>
-                    {member.name.charAt(0).toUpperCase()}
+                    {(member?.name || 'U').charAt(0).toUpperCase()}
                   </Text>
                 </View>
               )}
               <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>{member.name}</Text>
+                <Text style={styles.memberName}>{member?.name || 'Unknown'}</Text>
                 <Text style={styles.memberRole}>
-                  {member.userId === firebaseGroup?.createdBy ? 'Creator' : 
-                   member.role === 'admin' ? 'Admin' : 'Member'}
+                  {member?.userId === firebaseGroup?.createdBy ? 'Creator' :
+                   member?.role === 'admin' ? 'Admin' : 'Member'}
                 </Text>
-                <Text style={styles.memberContact}>{member.phoneNumber || member.email || ''}</Text>
+                <Text style={styles.memberContact}>{member?.phoneNumber || member?.email || ''}</Text>
               </View>
-              {isGroupAdmin && member.userId !== user?.id && (
+              {isGroupAdmin && member?.userId !== user?.id && (
                 <TouchableOpacity onPress={() => handleRemoveMember(member)}>
                   <Ionicons name="person-remove" size={20} color={colors.error} />
                 </TouchableOpacity>

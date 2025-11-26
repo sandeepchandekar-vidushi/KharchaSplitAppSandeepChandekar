@@ -1,12 +1,12 @@
-const Group = require('../models/Group');
-const User = require('../models/User');
+import Group from '../models/Group.js';
+import User from '../models/User.js';
+import { query } from '../config/database.js';
 
 class GroupService {
   /**
    * Calculate group balances
    */
   static async calculateBalances(groupId) {
-    const { query } = require('../config/database');
 
     // Get all expenses for this group
     const expensesResult = await query(
@@ -103,4 +103,4 @@ class GroupService {
   }
 }
 
-module.exports = GroupService;
+export default GroupService;

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -20,8 +21,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CreateNewGroupScreen } from './CreateNewGroupScreen';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
-import { firebaseService } from '../services/firebaseService';
+// import { firebaseService } from '../services/firebaseService'; // MIGRATED to PostgreSQL
 import { groupApi } from '../services/api/groupApi';
+import { expenseApi } from '../services/api/expenseApi';
 // --- RESPONSIVE ---
 // We now use this object to create scaled sizes
 import { typography } from '../utils/typography';
@@ -96,15 +98,20 @@ const calculateUserGroupBalance = (expenses: any[], userId: string, members: any
 
   // Process each expense
   expenses.forEach(expense => {
-    const payerId = expense.paidBy.id;
-    
-    expense.participants.forEach((participant: any) => {
-      const participantId = participant.id || participant.userId;
-      
-      if (participantId !== payerId) {
+    // Handle both nested paidBy object and flat paidById field
+    // Backend returns snake_case: paid_by_id, so check all formats
+    const payerId = expense.paid_by_id || expense.paidBy?.id || expense.paidById || expense.paidBy || '';
+    if (!payerId) return; // Skip if no payer info
+
+    (expense.participants || []).forEach((participant: any) => {
+      // Backend returns user_id (snake_case), so check all formats
+      const participantId = participant?.user_id || participant?.userId || participant?.id || '';
+      const participantAmount = Number(participant?.amount || 0);
+
+      if (participantId && participantId !== payerId) {
         // Participant owes payer
-        memberBalances[participantId] -= participant.amount;
-        memberBalances[payerId] += participant.amount;
+        memberBalances[participantId] -= participantAmount;
+        memberBalances[payerId] += participantAmount;
       }
     });
   });
@@ -215,10 +222,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [personalExpensesSummary, setPersonalExpensesSummary] = useState({
-    totalExpenses: 0,
-    expenseCount: 0,
-  });
   // Store prefill expense data when coming from scan flow
   const [pendingPrefillExpense, setPendingPrefillExpense] = useState<PrefillExpenseData | undefined>(undefined);
   // Personal Expenses moved to bottom tab - removed from HomeScreen
@@ -249,21 +252,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
 
     try {
       setGroupsLoading(true);
-      
-      const userGroups = await firebaseService.getUserGroups(user.id);
-      
-      // Calculate balances for each group - OPTIMIZED: Load in batches
+
+      // Load groups from PostgreSQL API
+      console.log('[HomeScreen] Loading groups from PostgreSQL API...');
+      const response = await groupApi.getUserGroups(user.id);
+      const userGroups = response.data;
+      console.log(`[HomeScreen] Loaded ${userGroups.length} groups`);
+
+      // Convert API groups to UI format with placeholder balances
       const convertedGroups: Group[] = userGroups.map((group) => {
-        // Return group with placeholder balances - will be calculated on-demand
         return {
           id: group.id,
           name: group.name,
           description: group.description,
           avatar: group.coverImageBase64 ? null : '🎭',
           coverImageUrl: group.coverImageBase64 || null,
-          youOwe: 0, // Will be updated later if needed
-          youAreOwed: 0, // Will be updated later if needed
-          details: [], // Will be calculated when user opens group
+          youOwe: 0,
+          youAreOwed: 0,
+          details: [],
           moreBalances: 0,
           members: group.members,
           createdAt: group.createdAt,
@@ -271,24 +277,21 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
         };
       });
 
-      // Load expenses for all groups in parallel (non-blocking)
-      // This happens in background and updates UI incrementally
-      loadGroupBalancesInBackground(userGroups);
-      
       setGroups(convertedGroups);
-      
-      // Calculate overall balance
+
+      // Load expenses and calculate balances in background
+      loadGroupBalancesInBackground(userGroups);
+
+      // Calculate overall balance (will update after expenses are loaded)
       calculateOverallBalance(convertedGroups);
     } catch (error: any) {
-      
-      // Show user-friendly error message for specific cases
-      if (error.message.includes('index required')) {
-        // For now, keep existing groups and don't show error to user
-      } else if (error.message.includes('permission denied')) {
-        // Permission denied - check Firebase rules
-      }
-      
+      console.error('[HomeScreen] Error loading groups:', error);
+
       // Keep existing groups on error - don't clear the state
+      if (error.response?.status === 401) {
+        // Unauthorized - token might be expired
+        console.error('[HomeScreen] Unauthorized - please login again');
+      }
     } finally {
       setGroupsLoading(false);
     }
@@ -298,12 +301,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
   const loadGroupBalancesInBackground = async (userGroups: any[]) => {
     if (!user) return;
 
+    console.log(`[HomeScreen] Loading balances for ${userGroups.length} groups in background...`);
+
     try {
       // Load expenses for all groups in parallel
       const balancePromises = userGroups.map(async (group, index) => {
         try {
-          const groupExpenses = await firebaseService.getGroupExpenses(group.id);
-          const balance = calculateUserGroupBalance(groupExpenses, user.id, group.members);
+          // Load expenses from PostgreSQL API
+          const expenseResponse = await expenseApi.getGroupExpenses(group.id);
+          const apiExpenses = expenseResponse.data || [];
+
+          // Pass API expenses directly - calculateUserGroupBalance handles snake_case fields
+          // Backend returns: paid_by_id, paid_by_name, participants with user_id
+          const balance = calculateUserGroupBalance(apiExpenses, user.id, group.members);
 
           // Update the specific group in the state
           setGroups(prevGroups => {
@@ -315,6 +325,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
                 youAreOwed: parseFloat(Math.max(0, balance.netBalance).toFixed(2)),
                 details: balance.details,
                 moreBalances: balance.details.length > 3 ? balance.details.length - 3 : 0,
+                totalExpenses: apiExpenses.length, // Update with actual expense count
               };
             }
             return updatedGroups;
@@ -372,31 +383,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
     });
   };
 
-  const loadPersonalExpensesSummary = async () => {
-    if (!user?.id) return;
-
-    try {
-      const summary = await firebaseService.getPersonalExpensesSummary(user.id);
-      setPersonalExpensesSummary({
-        totalExpenses: summary.totalExpenses,
-        expenseCount: summary.expenseCount,
-      });
-    } catch (error) {
-      // Silently handle errors
-    }
-  };
-
   const loadGroupsAndBalance = async () => {
     setBalanceLoading(true);
 
-    // Load groups from Firebase (now optimized - no longer waits for all expenses)
-    const dataPromise = loadGroupsFromFirebase();
-
-    // Load personal expenses summary in parallel
-    const personalExpensesPromise = loadPersonalExpensesSummary();
-
-    // Wait for both to complete
-    await Promise.all([dataPromise, personalExpensesPromise]);
+    // Load groups from PostgreSQL API
+    await loadGroupsFromFirebase();
 
     setBalanceLoading(false);
 
@@ -414,6 +405,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
 
   useEffect(() => {
     // Only load data if user is available
+    console.log(`[HomeScreen] useEffect triggered - user?.id: ${user?.id}`);
     if (user?.id) {
       loadGroupsAndBalance();
     } else {
@@ -449,6 +441,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
     // Delay token refresh to not interfere with screen loading
     setTimeout(autoRefreshFCMToken, 2000);
   }, [user?.id]);
+
+  // Track if we navigated away to a detail screen
+  const hasNavigatedAway = useRef(false);
+
+  // Refresh data when screen comes into focus ONLY if we navigated away
+  // This prevents unnecessary API calls on tab switches while still refreshing
+  // when returning from GroupDetail, AddExpense, etc.
+  useFocusEffect(
+    useCallback(() => {
+      // Only refresh if we actually navigated away and came back
+      if (hasNavigatedAway.current && !initialLoading && user?.id) {
+        console.log('[HomeScreen] Returned from detail screen - refreshing data');
+        loadGroupsAndBalance();
+        hasNavigatedAway.current = false;
+      }
+
+      // Cleanup: mark that we're navigating away when screen loses focus
+      return () => {
+        hasNavigatedAway.current = true;
+      };
+    }, [initialLoading, user?.id])
+  );
 
   const handleAddGroup = () => setShowCreateGroup(true);
   const handleCloseCreateGroup = () => setShowCreateGroup(false);
@@ -517,26 +531,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
           style: 'destructive',
           onPress: async () => {
             try {
-              // Try PostgreSQL backend first
-              try {
-                console.log('Deleting group from PostgreSQL backend...');
-                const response = await groupApi.deleteGroup(groupId);
+              // Use PostgreSQL backend
+              console.log('Deleting group from PostgreSQL backend...');
+              const response = await groupApi.deleteGroup(groupId);
 
-                if (response.success) {
-                  console.log('Group deleted successfully from PostgreSQL');
-                }
-              } catch (backendError: any) {
-                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+              if (response.success) {
+                console.log('Group deleted successfully from PostgreSQL');
 
-                // Fallback to Firebase
-                await firebaseService.deleteGroup(groupId);
-                console.log('Group deleted successfully from Firebase');
+                // Remove from local state
+                setGroups(prev => prev.filter(g => g.id !== groupId));
+
+                Alert.alert('Success', 'Group deleted successfully');
               }
-
-              // Remove from local state
-              setGroups(prev => prev.filter(g => g.id !== groupId));
-
-              Alert.alert('Success', 'Group deleted successfully');
             } catch (error) {
               console.error('Error deleting group:', error);
               Alert.alert('Error', 'Failed to delete group. Please try again.');
@@ -794,10 +800,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, route }) => 
                         <View key={idx} style={styles.detailRow}>
                           <Text style={styles.detailText}>{detail.text}</Text>
                           <Text style={styles.detailText}>
-                            {detail.type === 'owe' ? '-' : '+'}₹{detail.amount.toFixed(2)}
+                            {detail.type === 'owe' ? '-' : '+'}₹{Number(detail.amount || 0).toFixed(2)}
                           </Text>
                         </View>
                       ))
+                    ) : (group.totalExpenses || 0) > 0 ? (
+                      <Text style={styles.settledText}>All settled up! 🎉</Text>
                     ) : (
                       <Text style={styles.noExpensesText}>No expenses yet</Text>
                     )}
@@ -1085,9 +1093,9 @@ const createStyles = (
       paddingVertical: scale(2),
     },
     detailText: {
-      ...typography.text.body,
+      ...typography.text.caption,
       color: colors.primaryText,
-      fontSize: fonts.body, // Use passed-in font
+      fontSize: fonts.caption, // Match "No expenses yet" font size
     },
     moreBalances: {
       ...typography.text.caption,
@@ -1099,6 +1107,12 @@ const createStyles = (
       color: colors.secondaryText,
       fontSize: fonts.caption,
       fontStyle: 'italic',
+    },
+    settledText: {
+      ...typography.text.caption,
+      color: '#10B981',
+      fontSize: fonts.caption,
+      fontWeight: '500',
     },
     loadingContainer: {
       alignItems: 'center',

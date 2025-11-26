@@ -107,6 +107,21 @@ export const userApi = {
   },
 
   /**
+   * Get user by phone number
+   */
+  async getUserByPhone(phoneNumber: string): Promise<{
+    success: boolean;
+    data: User;
+  }> {
+    try {
+      const response = await apiClient.get(`/users/by-phone/${phoneNumber}`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
    * Update user profile
    */
   async updateUser(userId: string, data: UpdateUserData): Promise<{
@@ -158,6 +173,53 @@ export const userApi = {
       const response = await apiClient.post('/users/check-registration', {
         phoneNumbers,
       });
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Deactivate user account
+   */
+  async deactivateUser(userId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.delete(`/users/${userId}/deactivate`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Update FCM token for push notifications
+   */
+  async updateFcmToken(userId: string, fcmToken: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.put(`/users/${userId}/fcm-token`, {
+        fcmToken,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Remove FCM token (for logout or disabling notifications)
+   */
+  async removeFcmToken(userId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await apiClient.delete(`/users/${userId}/fcm-token`);
       return response.data;
     } catch (error: any) {
       throw error;

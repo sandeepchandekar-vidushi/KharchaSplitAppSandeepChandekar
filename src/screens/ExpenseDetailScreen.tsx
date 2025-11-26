@@ -108,22 +108,23 @@ export const ExpenseDetailScreen: React.FC<ExpenseDetailScreenProps> = ({ route,
 
 
   const renderParticipant = (participant: any) => {
-    const participantId = participant.userId || participant.id;
-    const member = groupMembers.find((m) => 
+    const participantId = participant?.userId || participant?.id || '';
+    const member = groupMembers.find((m) =>
       m.userId === participantId || m.id === participantId
     );
 
-    const displayName = member?.name || participant.name || 'Unknown User';
-    const displayEmail = member?.email || member?.phoneNumber || participant.email || '';
-    const displayAvatar = member?.avatar || participant.avatar;
+    const displayName = member?.name || participant?.name || 'Unknown User';
+    const displayEmail = member?.email || member?.phoneNumber || participant?.email || '';
+    const displayAvatar = member?.avatar || participant?.avatar;
+    const participantAmount = participant?.amount || 0;
 
     return (
-      <View key={participantId} style={styles(colors).participantItem}>
+      <View key={participantId || Math.random().toString()} style={styles(colors).participantItem}>
         {(() => {
           const imageUri = ensureDataUri(displayAvatar);
           return imageUri ? (
-            <Image 
-              source={{ uri: imageUri }} 
+            <Image
+              source={{ uri: imageUri }}
               style={styles(colors).participantAvatar}
               onError={() => {
                 // Handle avatar loading error
@@ -144,7 +145,7 @@ export const ExpenseDetailScreen: React.FC<ExpenseDetailScreenProps> = ({ route,
           )}
         </View>
         <View style={styles(colors).participantAmount}>
-          <Text style={styles(colors).participantAmountText}>₹{participant.amount.toFixed(0)}</Text>
+          <Text style={styles(colors).participantAmountText}>₹{participantAmount.toFixed(0)}</Text>
         </View>
       </View>
     );
@@ -191,7 +192,7 @@ export const ExpenseDetailScreen: React.FC<ExpenseDetailScreenProps> = ({ route,
             <Text style={styles(colors).expenseDate}>{formatDate(currentExpense.createdAt)}</Text>
           </View>
           <View style={styles(colors).expenseAmount}>
-            <Text style={styles(colors).expenseAmountText}>₹{currentExpense.amount.toFixed(0)}</Text>
+            <Text style={styles(colors).expenseAmountText}>₹{Number(currentExpense.amount || 0).toFixed(0)}</Text>
           </View>
         </View>
 

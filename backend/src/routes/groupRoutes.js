@@ -1,8 +1,8 @@
-const express = require('express');
-const { body } = require('express-validator');
-const { authenticate } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
-const groupController = require('../controllers/groupController');
+import express from 'express';
+import { body  } from 'express-validator';
+import { authenticate  } from '../middleware/auth.js';
+import { validate  } from '../middleware/validation.js';
+import groupController from '../controllers/groupController.js';
 
 const router = express.Router();
 
@@ -43,4 +43,9 @@ router.put(
   groupController.updateMemberRole
 );
 
-module.exports = router;
+// Archive/Unarchive routes
+router.put('/:id/archive', authenticate, groupController.archiveGroup);
+router.put('/:id/unarchive', authenticate, groupController.unarchiveGroup);
+router.put('/:id/complete', authenticate, groupController.completeGroup);
+
+export default router;

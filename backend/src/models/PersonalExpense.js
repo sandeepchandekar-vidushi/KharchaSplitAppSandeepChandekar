@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+import { query  } from '../config/database.js';
 
 class PersonalExpense {
   /**
@@ -115,4 +115,4 @@ class PersonalExpense {
   }
 }
 
-module.exports = PersonalExpense;
+export default PersonalExpense;

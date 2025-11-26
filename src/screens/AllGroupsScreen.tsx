@@ -16,7 +16,7 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService } from '../services/firebaseService';
+// import { firebaseService } from '../services/firebaseService'; // MIGRATED to PostgreSQL
 import { ensureDataUri } from '../utils/imageUtils';
 import { groupApi } from '../services/api/groupApi';
 
@@ -47,31 +47,18 @@ export const AllGroupsScreen: React.FC<AllGroupsScreenProps> = ({ navigation }) 
         setLoading(true);
       }
 
-      // Try PostgreSQL backend first
-      try {
-        console.log('Loading groups from PostgreSQL backend...');
-        const response = await groupApi.getUserGroups(user.id);
+      // Load groups from PostgreSQL backend
+      console.log('Loading groups from PostgreSQL backend...');
+      const response = await groupApi.getUserGroups(user.id);
 
-        if (response.success) {
-          // Separate active and completed groups
-          // For now, consider all groups as active (we'll add completed status later)
-          setActiveGroups(response.data);
-          setCompletedGroups([]);
-          console.log(`Loaded ${response.data.length} groups from PostgreSQL`);
-          return;
-        }
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        const [activeGroupsData, completedGroupsData] = await Promise.all([
-          firebaseService.getUserGroups(user.id),
-          firebaseService.getCompletedGroups(user.id),
-        ]);
+      if (response.success) {
+        // Separate active and completed groups based on isArchived flag
+        const activeGroupsData = response.data.filter((g: any) => !g.isArchived);
+        const completedGroupsData = response.data.filter((g: any) => g.isArchived);
 
         setActiveGroups(activeGroupsData);
         setCompletedGroups(completedGroupsData);
-        console.log(`Loaded ${activeGroupsData.length} active and ${completedGroupsData.length} completed groups from Firebase`);
+        console.log(`Loaded ${activeGroupsData.length} active and ${completedGroupsData.length} completed groups from PostgreSQL`);
       }
     } catch (error) {
       console.error('Error loading groups:', error);
@@ -137,7 +124,9 @@ export const AllGroupsScreen: React.FC<AllGroupsScreenProps> = ({ navigation }) 
             </Text>
             
             <Text style={styles(colors, scale).groupExpenses}>
-              ₹{group.totalExpenses?.toFixed(0) || '0'} total expenses
+              {(group.expenseCount || 0) > 0
+                ? `₹${Number(group.totalExpenses || 0).toFixed(0)} spent • ${group.expenseCount} expense${group.expenseCount > 1 ? 's' : ''}`
+                : 'No expenses yet'}
             </Text>
             
             {isCompleted && group.completedAt && (

@@ -254,59 +254,6 @@ export const OTPVerificationScreen: React.FC<OTPVerificationScreenProps> = ({
         // For other errors (network, server issues), show error
         console.error('Backend error during OTP verification:', backendError);
         Alert.alert('Error', 'Failed to verify OTP. Please check your connection and try again.');
-
-        /* FIREBASE FALLBACK - COMMENTED OUT FOR LOCAL TESTING
-        if (backendError.message?.includes('not found') ||
-            backendError.message?.includes('does not exist') ||
-            backendError.message?.includes('Invalid or expired OTP')) {
-          // PostgreSQL backend error - fallback to Firebase
-          console.log('PostgreSQL backend error, using Firebase fallback...');
-
-          const userExists = await authService.checkUserExists(phoneNumber);
-
-          if (userExists) {
-            // User exists in Firebase - use Firebase login
-            const { firebaseService } = await import('../services/firebaseService');
-            const { userStorage } = await import('../services/userStorage');
-
-            const userProfile = await firebaseService.getUserByPhone(phoneNumber);
-            if (userProfile) {
-              await userStorage.saveUser(userProfile);
-              await userStorage.saveAuthToken(userProfile.id);
-              login(userProfile);
-
-              setTimeout(async () => {
-                await NotificationPermissionHelper.requestPermissionIfNeeded();
-              }, 1000);
-            }
-          } else {
-            navigation.navigate('ProfileSetup', { phoneNumber });
-          }
-        } else {
-          // Other backend error - fallback to Firebase
-          console.log('Backend connection error, falling back to Firebase...');
-
-          const userExists = await authService.checkUserExists(phoneNumber);
-
-          if (userExists) {
-            const { firebaseService } = await import('../services/firebaseService');
-            const { userStorage } = await import('../services/userStorage');
-
-            const userProfile = await firebaseService.getUserByPhone(phoneNumber);
-            if (userProfile) {
-              await userStorage.saveUser(userProfile);
-              await userStorage.saveAuthToken(userProfile.id);
-              login(userProfile);
-
-              setTimeout(async () => {
-                await NotificationPermissionHelper.requestPermissionIfNeeded();
-              }, 1000);
-            }
-          } else {
-            navigation.navigate('ProfileSetup', { phoneNumber });
-          }
-        }
-        */
       }
     } catch (error) {
       handleInvalidOTP();

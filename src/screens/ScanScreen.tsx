@@ -321,6 +321,7 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({ navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Scan Bill and Expense</Text>
+        <View style={{ width: scaledFontSize.xl }} />
       </View>
 
       <View style={styles.content}>
@@ -393,14 +394,16 @@ const createStyles = (
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: scale(16),
-    paddingVertical: scale(12),
+    justifyContent: 'space-between',
+    paddingHorizontal: scale(20),
+    paddingVertical: scale(16),
     backgroundColor: colors.cardBackground,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.secondaryText + '20',
   },
   headerTitle: {
-    fontSize: fonts.header,
-    fontWeight: '600',
+    fontSize: scale(24),
+    fontWeight: '700',
     color: colors.primaryText,
   },
   content: {

@@ -19,7 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 // --- RESPONSIVE ---
 import { typography } from '../utils/typography'; // Assuming path is correct
-import { firebaseService } from '../services/firebaseService';
+// import { firebaseService } from '../services/firebaseService';
 import { userApi } from '../services/api/userApi';
 
 type DeleteAccountProps = {
@@ -182,18 +182,10 @@ export const DeleteAccount: React.FC<DeleteAccountProps> = ({ onClose }) => {
     setIsDeleting(true);
 
     try {
-      // Try PostgreSQL backend first
-      try {
-        console.log('Deleting user account via PostgreSQL backend...');
-        await userApi.deleteUser(user.id);
-        console.log('User account deleted successfully via PostgreSQL');
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase deactivation
-        await firebaseService.deactivateUserAccount(user.id);
-        console.log('User account deactivated successfully via Firebase');
-      }
+      // Deactivate user account via PostgreSQL backend
+      console.log('Deactivating user account via PostgreSQL backend...');
+      await userApi.deactivateUser(user.id);
+      console.log('User account deactivated successfully');
 
       setShowConfirmModal(false);
 

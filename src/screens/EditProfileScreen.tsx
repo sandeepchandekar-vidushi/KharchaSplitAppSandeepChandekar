@@ -18,7 +18,8 @@ import { launchImageLibrary, ImageLibraryOptions } from 'react-native-image-pick
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { firebaseService, UpdateUserProfile } from '../services/firebaseService';
+// import { firebaseService, UpdateUserProfile } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { UpdateUserProfile } from '../services/firebaseService';
 import { userStorage } from '../services/userStorage';
 import { processProfileImage, getProfileImageUri } from '../utils/imageUtils';
 import { PhotoLibraryPermissionHelper } from '../utils/PhotoLibraryPermissionHelper';
@@ -148,38 +149,26 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({ onClose })
         preferredCurrency: formData.preferredCurrency,
       };
 
-      let updatedUser;
+      // Update via PostgreSQL backend
+      console.log('Updating user profile via PostgreSQL backend...');
+      const response = await userApi.updateUser(user.id, {
+        name: updateData.name,
+        email: updateData.email,
+        profileImageBase64: updateData.profileImageBase64,
+        preferredCurrency: updateData.preferredCurrency,
+      });
 
-      // Try PostgreSQL backend first
-      try {
-        console.log('Updating user profile via PostgreSQL backend...');
-        const response = await userApi.updateUser(user.id, {
-          name: updateData.name,
-          email: updateData.email,
-          profileImageBase64: updateData.profileImageBase64,
-          preferredCurrency: updateData.preferredCurrency,
-        });
-
-        if (response.success) {
-          // Map API response to user format
-          updatedUser = {
-            ...user,
-            ...updateData,
-            profileImage: response.data.profileImage,
-          };
-          console.log('User profile updated successfully via PostgreSQL');
-        }
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        updatedUser = await firebaseService.updateUser(user.id, updateData);
-        console.log('User profile updated successfully via Firebase');
-      }
-
-      if (!updatedUser) {
+      if (!response.success) {
         throw new Error('Failed to update user profile');
       }
+
+      // Map API response to user format
+      const updatedUser = {
+        ...user,
+        ...updateData,
+        profileImage: response.data.profileImage,
+      };
+      console.log('User profile updated successfully via PostgreSQL');
 
       // Clear base64 image from memory after successful upload
       setProfileImageBase64('');

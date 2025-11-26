@@ -40,6 +40,23 @@ if (
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// Currency symbol helper
+const getCurrencySymbol = (currencyCode?: string): string => {
+  const symbols: { [key: string]: string } = {
+    INR: '₹',
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    AUD: 'A$',
+    CAD: 'C$',
+    SGD: 'S$',
+    AED: 'د.إ',
+    JPY: '¥',
+    CNY: '¥',
+  };
+  return symbols[currencyCode || 'INR'] || '₹';
+};
+
 // --- TYPES ---
 type Group = any;
 type Member = any;
@@ -139,8 +156,8 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [groupMembers, setGroupMembers] = useState<Member[]>([]);
   const [balances, setBalances] = useState<Record<string, {net: number}>>({});
-  const [settlements, setSettlements] = useState<any[]>([]);
-  const [firebaseSettlements, setFirebaseSettlements] = useState<Settlement[]>([]);
+  const [settlements, setSettlements] = useState<any[]>([]); // Calculated settlements from balances
+  const [settlementRecords, setSettlementRecords] = useState<any[]>([]); // Actual settlement records from PostgreSQL
   const [loading, setLoading] = useState(true); // Start as true for initial load
   const [initialLoad, setInitialLoad] = useState(true); // Track first load
   const [dataLoaded, setDataLoaded] = useState(false); // Track if data has been loaded at least once
@@ -163,26 +180,32 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
 
     // Process each expense
     expenses.forEach(expense => {
-      const payerId = expense.paidBy.id;
+      // Handle both nested paidBy object and flat paidById field
+      // Backend returns snake_case: paid_by_id, so check all formats
+      const payerId = expense.paid_by_id || expense.paidBy?.id || expense.paidById || expense.paidBy || '';
+      if (!payerId) return; // Skip if no payer info
 
-      expense.participants.forEach((participant: any) => {
-        const participantId = participant.id || participant.userId;
-        if (participantId !== payerId) {
+      (expense.participants || []).forEach((participant: any) => {
+        // Backend returns user_id (snake_case), so check all formats
+        const participantId = participant?.user_id || participant?.userId || participant?.id || '';
+        const participantAmount = Number(participant?.amount || 0);
+        if (participantId && participantId !== payerId) {
           // Participant owes payer
           if (balances[participantId]) {
-            balances[participantId].net -= participant.amount;
+            balances[participantId].net -= participantAmount;
           }
           if (balances[payerId]) {
-            balances[payerId].net += participant.amount;
+            balances[payerId].net += participantAmount;
           }
         }
       });
     });
 
-    // Subtract confirmed/paid settlements from balances
+    // Subtract settlements from balances
+    // Include 'pending', 'paid', and 'confirmed' settlements to square off balances
+    // Pending settlements are included so users don't see "stale" balances while waiting for confirmation
     paidSettlements.forEach(settlement => {
-      // Include both 'paid' and 'confirmed' settlements to square off balances
-      if (settlement.status === 'paid' || settlement.status === 'confirmed') {
+      if (settlement.status === 'paid' || settlement.status === 'confirmed' || settlement.status === 'pending') {
         const fromUserId = settlement.fromUserId;
         const toUserId = settlement.toUserId;
         const amount = settlement.amount;
@@ -260,6 +283,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   }, [currentUserId]);
 
   const loadGroupData = useCallback(async (isRefresh = false) => {
+    console.log(`[GroupDetailScreen] loadGroupData called - isRefresh: ${isRefresh}`);
     const groupId = currentGroup?.id || group?.id;
     if (!groupId) {
       setLoading(false);
@@ -274,45 +298,27 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     }
 
     try {
-      // Import Firebase service dynamically for fallback
-      const { firebaseService } = await import('../services/firebaseService');
-
       let updatedGroup: any;
       let groupExpenses: any[];
       let loadedSettlements: any[];
 
-      // Try PostgreSQL backend first
-      try {
-        console.log('Loading group data from PostgreSQL backend...');
+      // Load group data from PostgreSQL backend
+      console.log('[GroupDetailScreen] Loading group data from PostgreSQL backend...');
 
-        const [groupResponse, expensesResponse, settlementsResponse] = await Promise.all([
-          groupApi.getGroupById(groupId),
-          expenseApi.getGroupExpenses(groupId),
-          settlementApi.getGroupSettlements(groupId).catch(() => ({ success: true, data: [] })),
-        ]);
+      const [groupResponse, expensesResponse, settlementsResponse] = await Promise.all([
+        groupApi.getGroupById(groupId),
+        expenseApi.getGroupExpenses(groupId),
+        settlementApi.getGroupSettlements(groupId),
+      ]);
 
-        if (groupResponse.success) {
-          updatedGroup = groupResponse.data;
-          groupExpenses = expensesResponse.data || [];
-          loadedSettlements = settlementsResponse.data || [];
-          console.log(`Loaded from PostgreSQL: ${groupExpenses.length} expenses, ${loadedSettlements.length} settlements`);
-        } else {
-          throw new Error('PostgreSQL response unsuccessful');
-        }
-      } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+      if (groupResponse.success) {
+        updatedGroup = groupResponse.data;
+        groupExpenses = expensesResponse.data || [];
+        loadedSettlements = settlementsResponse.data || [];
 
-        // Fallback to Firebase
-        const [fbGroup, fbExpenses, fbSettlements] = await Promise.all([
-          firebaseService.getGroupById(groupId),
-          firebaseService.getGroupExpenses(groupId),
-          firebaseService.getGroupSettlements(groupId).catch(() => []),
-        ]);
-
-        updatedGroup = fbGroup;
-        groupExpenses = fbExpenses;
-        loadedSettlements = fbSettlements;
-        console.log(`Loaded from Firebase: ${groupExpenses.length} expenses, ${loadedSettlements.length} settlements`);
+        console.log(`[GroupDetailScreen] Loaded: ${groupExpenses.length} expenses, ${loadedSettlements.length} settlements`);
+      } else {
+        throw new Error('PostgreSQL response unsuccessful');
       }
 
       if (updatedGroup) {
@@ -323,7 +329,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           coverImageBase64: updatedGroup.coverImageBase64
         };
 
-        const members = updatedGroup.members.map(member => ({
+        const members = updatedGroup.members.map((member: any) => ({
           userId: member.userId,
           name: member.name,
           email: member.phoneNumber,
@@ -333,48 +339,61 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           role: member.role
         }));
 
-        // Transform Firebase expenses to component format with proper member mapping
+        // Transform PostgreSQL expenses to component format with proper member mapping
         const transformedExpenses = groupExpenses.map(expense => {
           // Map participants with proper member data
-          const enrichedParticipants = expense.participants.map(participant => {
-            const member = updatedGroup?.members.find(m => m.userId === participant.id);
+          // Backend returns user_id (snake_case), so check both formats
+          const enrichedParticipants = (expense.participants || []).map((participant: any) => {
+            const participantId = participant?.user_id || participant?.userId || participant?.id || '';
+            const member = updatedGroup?.members?.find((m: any) => m.userId === participantId);
 
             return {
               ...participant,
-              userId: participant.id, // Ensure userId field exists
-              name: participant.name || member?.name || 'Unknown User',
+              userId: participantId, // Ensure userId field exists
+              id: participantId,
+              name: participant?.name || member?.name || 'Unknown User',
               email: member?.phoneNumber || '',
-              avatar: member?.profileImage || '',
+              avatar: member?.profileImage || participant?.profile_image_base64 || '',
+              amount: Number(participant?.amount || 0), // Ensure amount is a number
             };
           });
+
+          // Backend returns snake_case fields: paid_by_id, paid_by_name, expense_date, created_at
+          const paidById = expense.paid_by_id || expense.paidById || expense.paidBy?.id || '';
+          const paidByName = expense.paid_by_name || expense.paidByName || expense.paidBy?.name || 'Unknown';
+          const expenseDate = expense.expense_date || expense.expenseDate || expense.created_at || expense.createdAt;
 
           return {
             id: expense.id,
             description: expense.description,
-            amount: expense.amount,
+            amount: Number(expense.amount || 0), // Ensure amount is a number
             category: expense.category,
-            paidBy: expense.paidBy.id,
-            paidByName: expense.paidBy.name,
+            paidBy: paidById,
+            paidById: paidById,
+            paidByName: paidByName,
             participants: enrichedParticipants,
-            createdAt: { toDate: () => new Date(expense.createdAt) },
-            receiptBase64: expense.receiptBase64,
+            createdAt: { toDate: () => new Date(expenseDate || Date.now()) },
+            receiptBase64: expense.receipt_base64 || expense.receiptBase64,
             // Add receiptUrl for compatibility with ExpenseDetailScreen
-            receiptUrl: ensureDataUri(expense.receiptBase64),
+            receiptUrl: ensureDataUri(expense.receipt_base64 || expense.receiptBase64),
           };
         });
 
-        // Calculate balances dynamically, including confirmed/paid settlements
-        const confirmedSettlements = loadedSettlements.filter(s => s.status === 'paid' || s.status === 'confirmed');
+        // Calculate balances dynamically, including all settlements (pending, confirmed, paid)
+        // Pending settlements are included to prevent duplicate settlement creation
+        const allActiveSettlements = loadedSettlements.filter(s =>
+          s.status === 'paid' || s.status === 'confirmed' || s.status === 'pending'
+        );
         const calculatedBalances = calculateBalancesFromExpenses(
           groupExpenses,
           updatedGroup?.members || [],
-          confirmedSettlements
+          allActiveSettlements
         );
 
         // Calculate settlements from remaining balances
         const calculatedSettlements = calculateOptimalSettlements(calculatedBalances, updatedGroup?.members || []);
 
-        const isAdmin = updatedGroup.createdBy === currentUserId || members.some(m => m.userId === currentUserId && m.isAdmin);
+        const isAdmin = updatedGroup.createdBy === currentUserId || members.some((m: any) => m.userId === currentUserId && m.isAdmin);
 
         // CRITICAL: Batch all state updates together to prevent flickering
         // Use a single synchronous block to update all states at once
@@ -382,9 +401,9 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
         setGroupMembers(members);
         setIsGroupAdmin(isAdmin);
         setExpenses(transformedExpenses);
-        setFirebaseSettlements(loadedSettlements);
         setBalances(calculatedBalances);
         setSettlements(calculatedSettlements);
+        setSettlementRecords(loadedSettlements); // Store PostgreSQL settlement records
         setDataLoaded(true);
       }
 
@@ -397,7 +416,9 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       setLoading(false);
       setInitialLoad(false);
     }
-  }, [currentGroup, group, currentUserId, initialLoad, dataLoaded, calculateBalancesFromExpenses, calculateOptimalSettlements]);
+  // Note: Using minimal dependencies to prevent unnecessary re-renders
+  // The function accesses currentGroup/group via closure which is fine for the groupId
+  }, [group?.id, currentUserId, calculateBalancesFromExpenses, calculateOptimalSettlements]);
 
   // Load data once on mount only
   useEffect(() => {
@@ -414,15 +435,22 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
 
   // Refresh data when screen comes into focus (skip first focus which is mount)
   const focusCountRef = useRef(0);
+  const loadGroupDataRef = useRef(loadGroupData);
+
+  // Keep ref updated with latest loadGroupData
+  useEffect(() => {
+    loadGroupDataRef.current = loadGroupData;
+  }, [loadGroupData]);
+
   useFocusEffect(
     useCallback(() => {
       focusCountRef.current += 1;
 
       // Skip first focus (which is mount - already handled by useEffect)
       if (focusCountRef.current > 1) {
-        loadGroupData(false);
+        loadGroupDataRef.current(false);
       }
-    }, [loadGroupData])
+    }, []) // Empty deps - ref always has latest function
   );
 
   const onRefresh = useCallback(async () => {
@@ -450,10 +478,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       const allSettlements = calculateOptimalSettlements(balances, groupMembers);
       const pendingSettlements = allSettlements.length > 0;
 
-      // Also check firebase settlements for pending status
-      const firebasePendingSettlements = firebaseSettlements.filter(s => s.status === 'pending' || s.status === 'unpaid');
-
-      if (pendingSettlements || firebasePendingSettlements.length > 0) {
+      if (pendingSettlements) {
         Alert.alert(
           'Cannot Complete Group',
           'This group has pending settlements. Please settle all balances before completing the group.',
@@ -473,11 +498,10 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             onPress: async () => {
               try {
                 setLoading(true);
-                const { firebaseService } = await import('../services/firebaseService');
                 const { NotificationService } = await import('../services/notificationService');
 
-                // Complete the group
-                await firebaseService.completeGroup(currentGroup.id, currentUserId || undefined);
+                // Complete the group using PostgreSQL API
+                await groupApi.completeGroup(currentGroup.id);
 
                 // Send push notification to all group members
                 try {
@@ -512,8 +536,11 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                       style: 'default',
                       onPress: async () => {
                         try {
-                          // Archive the group
-                          await firebaseService.archiveGroup(currentGroup.id, currentUserId || undefined);
+                          // Archive the group using PostgreSQL API
+                          console.log('Archiving group in PostgreSQL backend...');
+                          await groupApi.archiveGroup(currentGroup.id);
+                          console.log('Group archived successfully in PostgreSQL');
+
                           Alert.alert(
                             'Group Archived',
                             'The group has been archived. You can find it in the "All Groups" section under Archived.',
@@ -524,7 +551,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                               }
                             ]
                           );
-                        } catch (archiveError) {
+                        } catch (archiveError: any) {
                           console.error('Failed to archive group:', archiveError);
                           Alert.alert(
                             'Archive Failed',
@@ -553,13 +580,13 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     } catch (error) {
       Alert.alert('Error', 'Failed to check group status. Please try again.');
     }
-  }, [balances, groupMembers, firebaseSettlements, currentGroup.id, currentGroup.name, navigation, currentUserId, calculateOptimalSettlements]);
+  }, [balances, groupMembers, currentGroup.id, currentGroup.name, navigation, currentUserId, calculateOptimalSettlements]);
 
   // Settlement Actions
   const handleSettlePayment = useCallback(async (settlement: any) => {
     Alert.alert(
       'Settle Payment',
-      `Mark payment of ₹${settlement.amount.toFixed(0)} to ${settlement.to} as paid?`,
+      `Mark payment of ₹${Number(settlement.amount || 0).toFixed(0)} to ${settlement.to} as paid?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -567,51 +594,23 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           onPress: async () => {
             try {
               setSettlementLoading(true);
-              const { firebaseService } = await import('../services/firebaseService');
 
-              // Try PostgreSQL backend first
-              try {
-                console.log('Creating settlement in PostgreSQL backend...');
-                const response = await settlementApi.createSettlement({
-                  groupId: currentGroup.id,
-                  fromUserId: settlement.fromUserId,
-                  toUserId: settlement.toUserId,
-                  amount: settlement.amount,
-                  currency: 'INR',
-                });
+              console.log('[GroupDetailScreen] Creating settlement in PostgreSQL backend...');
+              await settlementApi.createSettlement({
+                groupId: currentGroup.id,
+                fromUserId: settlement.fromUserId,
+                toUserId: settlement.toUserId,
+                amount: settlement.amount,
+                currency: currentGroup.currency || 'INR',
+              });
 
-                if (response.success) {
-                  // Reload settlements from PostgreSQL
-                  const settlementsResponse = await settlementApi.getGroupSettlements(currentGroup.id);
-                  setFirebaseSettlements(settlementsResponse.data || []);
-                  console.log('Settlement created and loaded from PostgreSQL');
-                }
-              } catch (backendError: any) {
-                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-                // Fallback to Firebase
-                const timestamp = new Date().toISOString();
-                await firebaseService.createSettlement({
-                  groupId: currentGroup.id,
-                  fromUserId: settlement.fromUserId,
-                  fromUserName: settlement.from.replace(' (You)', ''),
-                  toUserId: settlement.toUserId,
-                  toUserName: settlement.to.replace(' (You)', ''),
-                  amount: settlement.amount,
-                  status: 'pending' as const,
-                  createdAt: timestamp,
-                  updatedAt: timestamp,
-                  paidAt: timestamp,
-                });
-
-                // Reload settlements from Firebase
-                const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
-                setFirebaseSettlements(updatedSettlements);
-                console.log('Settlement created and loaded from Firebase');
-              }
+              // Reload group data to get updated settlements
+              await loadGroupData();
+              console.log('[GroupDetailScreen] Settlement created successfully');
 
               Alert.alert('Success', 'Payment marked as pending. Waiting for confirmation from receiver.');
             } catch (error) {
+              console.error('[GroupDetailScreen] Failed to create settlement:', error);
               Alert.alert('Error', 'Failed to mark payment. Please try again.');
             } finally {
               setSettlementLoading(false);
@@ -625,7 +624,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   const handleConfirmPayment = useCallback(async (settlement: Settlement) => {
     Alert.alert(
       'Confirm Payment',
-      `Confirm that you received ₹${settlement.amount.toFixed(0)} from ${settlement.fromUserName}?`,
+      `Confirm that you received ₹${Number(settlement.amount || 0).toFixed(0)} from ${settlement.fromUserName}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -638,33 +637,16 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
 
             try {
               setSettlementLoading(true);
-              const { firebaseService } = await import('../services/firebaseService');
+              console.log('[GroupDetailScreen] Confirming settlement in PostgreSQL backend...');
+              await settlementApi.confirmSettlement(settlement.id);
 
-              // Try PostgreSQL backend first
-              try {
-                console.log('Confirming settlement in PostgreSQL backend...');
-                const response = await settlementApi.confirmSettlement(settlement.id);
-
-                if (response.success) {
-                  // Reload settlements from PostgreSQL
-                  const settlementsResponse = await settlementApi.getGroupSettlements(currentGroup.id);
-                  setFirebaseSettlements(settlementsResponse.data || []);
-                  console.log('Settlement confirmed and loaded from PostgreSQL');
-                }
-              } catch (backendError: any) {
-                console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-                // Fallback to Firebase
-                await firebaseService.confirmSettlement(currentGroup.id, settlement.id);
-
-                // Reload settlements from Firebase
-                const updatedSettlements = await firebaseService.getGroupSettlements(currentGroup.id);
-                setFirebaseSettlements(updatedSettlements);
-                console.log('Settlement confirmed and loaded from Firebase');
-              }
+              // Reload group data to get updated settlements
+              await loadGroupData();
+              console.log('[GroupDetailScreen] Settlement confirmed successfully');
 
               Alert.alert('Success', 'Payment confirmed!');
             } catch (error) {
+              console.error('[GroupDetailScreen] Failed to confirm settlement:', error);
               Alert.alert('Error', 'Failed to confirm payment. Please try again.');
             } finally {
               setSettlementLoading(false);
@@ -678,21 +660,16 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   const handleLeaveGroup = useCallback(async () => {
     try {
       // Check if the current user has any pending settlements
-      const userPendingSettlements = settlements.filter(settlement => 
-        settlement.fromUserId === currentUserId || settlement.toUserId === currentUserId
-      );
-      
-      // Also check Firebase settlements for pending status involving the current user
-      const userFirebasePendingSettlements = firebaseSettlements.filter(settlement => 
+      const userPendingSettlements = settlementRecords.filter(settlement =>
         (settlement.fromUserId === currentUserId || settlement.toUserId === currentUserId) &&
         (settlement.status === 'pending' || settlement.status === 'unpaid')
       );
-      
+
       // Check if user has any outstanding balance
       const userBalance = balances[currentUserId || ''];
       const hasOutstandingBalance = userBalance && Math.abs(userBalance.net) > 0.01;
-      
-      if (userPendingSettlements.length > 0 || userFirebasePendingSettlements.length > 0 || hasOutstandingBalance) {
+
+      if (userPendingSettlements.length > 0 || hasOutstandingBalance) {
         Alert.alert(
           'Cannot Leave Group',
           'You have pending settlements or outstanding balances in this group. Please settle all your dues before leaving the group.',
@@ -713,8 +690,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             onPress: async () => {
               try {
                 setLoading(true);
-                const { firebaseService } = await import('../services/firebaseService');
-                await firebaseService.removeGroupMember(currentGroup.id, currentUserId || '');
+                await groupApi.removeGroupMember(currentGroup.id, currentUserId || '');
                 Alert.alert(
                   'Left Group',
                   'You have successfully left the group.',
@@ -737,7 +713,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     } catch (error) {
       Alert.alert('Error', 'Failed to check settlement status. Please try again.');
     }
-  }, [settlements, firebaseSettlements, balances, currentUserId, currentGroup.id, navigation]);
+  }, [settlementRecords, balances, currentUserId, currentGroup.id, navigation]);
 
   const categoryMapping: Record<number | string, {emoji: string; color: string}> = {
     1: {emoji: '🍽️', color: '#FEF3C7'},
@@ -776,7 +752,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             type: 'owes',
             text: `${target.name}${
               targetUserId === currentUserId ? ' (You)' : ''
-            } owes ₹${settleAmount.toFixed(0)} to ${member.name}${
+            } owes ₹${Number(settleAmount || 0).toFixed(0)} to ${member.name}${
               userId === currentUserId ? ' (You)' : ''
             }`,
             amount: settleAmount,
@@ -790,7 +766,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
             type: 'owed',
             text: `${member.name}${
               userId === currentUserId ? ' (You)' : ''
-            } owes ₹${settleAmount.toFixed(0)} to ${target.name}${
+            } owes ₹${Number(settleAmount || 0).toFixed(0)} to ${target.name}${
               targetUserId === currentUserId ? ' (You)' : ''
             }`,
             amount: settleAmount,
@@ -844,8 +820,8 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       // Someone else paid the expense - user owes money
       if (userShare > 0) {
         // Check if user has settled this with the payer
-        const settlementWithPayer = firebaseSettlements.find(settlement => 
-          settlement.fromUserId === currentUserId && 
+        const settlementWithPayer = settlementRecords.find(settlement =>
+          settlement.fromUserId === currentUserId &&
           settlement.toUserId === expense.paidBy
         );
         
@@ -863,7 +839,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
     }
 
     return { status: 'settled', label: 'Settled', color: colors.success || '#10B981' };
-  }, [currentUserId, colors, firebaseSettlements, balances]);
+  }, [currentUserId, colors, settlementRecords, balances]);
 
   // --- RENDER FUNCTIONS ---
   
@@ -967,9 +943,9 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                   </View>
                   <View style={styles.expenseAmounts}>
                     <Text style={styles.expenseAmount}>
-                      ₹{(expense.amount || 0).toFixed(0)}
+                      ₹{Number(expense.amount || 0).toFixed(0)}
                     </Text>
-                    <Text style={styles.expenseShare}>₹{yourShare.toFixed(0)}</Text>
+                    <Text style={styles.expenseShare}>₹{Number(yourShare || 0).toFixed(0)}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -993,12 +969,12 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
       return <BalancesSkeleton />;
     }
 
-    if (!balanceList.length) {
+    if (!balanceList.length || (!expenses || expenses.length === 0)) {
       return (
         <View style={styles.noDataContainer}>
-          <Ionicons name="wallet" size={scale(48)} color={colors.secondaryText} />
-          <Text style={styles.noDataText}>No balances yet</Text>
-          <Text style={styles.noDataSubtext}>Add expenses to see balances</Text>
+          <Ionicons name="receipt" size={scale(48)} color={colors.secondaryText} />
+          <Text style={styles.noDataText}>No expenses yet</Text>
+          <Text style={styles.noDataSubtext}>Add your first expense to get started</Text>
         </View>
       );
     }
@@ -1049,7 +1025,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                       styles.balanceAmount,
                       {color: item.balance.net >= 0 ? '#10B981' : '#EF4444'},
                     ]}>
-                    ₹{totalAmount.toFixed(0)}
+                    ₹{Number(totalAmount || 0).toFixed(0)}
                   </Text>
                   {breakdown.length > 0 && (
                     <Ionicons
@@ -1097,38 +1073,124 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
   };
 
   const renderSettlement = () => {
-    
+
     if (loading || groupMembers.length === 0) {
       return <SettlementSkeleton />;
     }
 
-    if (settlements.length === 0) {
+    // No expenses at all - show "No expenses yet"
+    if (!expenses || expenses.length === 0) {
       return (
         <View style={styles.noDataContainer}>
-          <Ionicons name="checkmark-circle" size={scale(48)} color={colors.success} />
-          <Text style={styles.noDataText}>All settled up!</Text>
-          <Text style={styles.noDataSubtext}>No pending settlements</Text>
-          <Text style={styles.noDataSubtext}>Add some expenses to see settlements</Text>
+          <Ionicons name="receipt" size={scale(48)} color={colors.secondaryText} />
+          <Text style={styles.noDataText}>No expenses yet</Text>
+          <Text style={styles.noDataSubtext}>Add your first expense to get started</Text>
         </View>
       );
     }
 
-    // Separate active and completed settlements
-    const activeSettlements = settlements; // These are calculated from current balances
-    const completedSettlements = firebaseSettlements.filter(fs => fs.status === 'paid');
-    
+    // Has expenses but no settlements needed - show "All settled up"
+    if (settlements.length === 0) {
+      return (
+        <View style={styles.noDataContainer}>
+          <Ionicons name="checkmark-circle" size={scale(48)} color={colors.success || '#10B981'} />
+          <Text style={styles.noDataText}>All settled up! 🎉</Text>
+          <Text style={styles.noDataSubtext}>Everyone is square in this group</Text>
+        </View>
+      );
+    }
+
+    // Separate active, pending confirmation, and completed settlements
+    const activeSettlements = settlements; // These are calculated from remaining balances (after subtracting pending/paid)
+    const pendingConfirmationSettlements = settlementRecords.filter(fs => fs.status === 'pending');
+    const completedSettlements = settlementRecords.filter(fs => fs.status === 'paid' || fs.status === 'confirmed');
+
     return (
       <>
+        {/* Pending Confirmation - Settlements awaiting receiver confirmation */}
+        {pendingConfirmationSettlements.length > 0 && (
+          <>
+            <Text style={styles.sectionHeader}>Awaiting Confirmation</Text>
+            {pendingConfirmationSettlements.map((settlement) => {
+              const isCurrentUserPayer = settlement.fromUserId === currentUserId;
+              const isCurrentUserReceiver = settlement.toUserId === currentUserId;
+              const fromMember = groupMembers.find(m => m.userId === settlement.fromUserId);
+              const toMember = groupMembers.find(m => m.userId === settlement.toUserId);
+
+              return (
+                <View key={settlement.id} style={styles.settlementItem}>
+                  <View style={styles.settlementInfo}>
+                    <Ionicons
+                      name="time-outline"
+                      size={scale(24)}
+                      color="#F59E0B"
+                      style={styles.settlementIcon}
+                    />
+                    <View style={styles.settlementTextContainer}>
+                      <Text style={styles.settlementText}>
+                        <Text style={styles.settlementName}>
+                          {fromMember?.name || 'Unknown'}{isCurrentUserPayer ? ' (You)' : ''}
+                        </Text>
+                        {' paid '}
+                        <Text style={styles.settlementName}>
+                          {toMember?.name || 'Unknown'}{isCurrentUserReceiver ? ' (You)' : ''}
+                        </Text>
+                      </Text>
+                      <Text style={[styles.settlementStatus, { color: '#F59E0B' }]}>
+                        Waiting for confirmation
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.settlementActions}>
+                    <Text style={styles.settlementAmount}>
+                      {getCurrencySymbol(currentGroup?.currency)}
+                      {Number(settlement.amount || 0).toFixed(0)}
+                    </Text>
+
+                    {isCurrentUserPayer && (
+                      <View style={styles.pendingButton}>
+                        <Text style={styles.pendingButtonText}>Pending</Text>
+                      </View>
+                    )}
+
+                    {isCurrentUserReceiver && (
+                      <TouchableOpacity
+                        style={styles.confirmButton}
+                        onPress={() => handleConfirmPayment(settlement)}
+                        disabled={settlementLoading}
+                      >
+                        <Text style={styles.confirmButtonText}>
+                          {settlementLoading ? 'Processing...' : 'Confirm'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {!isCurrentUserPayer && !isCurrentUserReceiver && (
+                      <View style={styles.pendingButton}>
+                        <Text style={styles.pendingButtonText}>Pending</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </>
+        )}
+
         {/* Active Settlements - Need to be paid */}
         {activeSettlements.length > 0 && (
-          <Text style={styles.sectionHeader}>Pending Settlements</Text>
+          <Text style={styles.sectionHeader}>Settlements Needed</Text>
         )}
         {activeSettlements.map((settlement) => {
-          // Check if this settlement has a Firebase tracking record
-          const firebaseSettlement = firebaseSettlements.find(fs => 
-            fs.fromUserId === settlement.fromUserId && 
+          // Check if this settlement has a tracking record in database
+          // Match by user IDs only (not amount) since amounts may have rounding differences
+          // We already filter out pending/paid settlements from balance calculation,
+          // so this should only match "leftover" unpaid amounts
+          const settlementRecord = settlementRecords.find(fs =>
+            fs.fromUserId === settlement.fromUserId &&
             fs.toUserId === settlement.toUserId &&
-            Math.abs(fs.amount - settlement.amount) < 0.01
+            fs.status !== 'paid' && fs.status !== 'confirmed' // Only match non-completed settlements
           );
 
           const isCurrentUserPayer = settlement.fromUserId === currentUserId;
@@ -1152,18 +1214,18 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                   </Text>
                   <Text style={styles.settlementStatus}>
                     Status: {
-                      !firebaseSettlement ? 'Unpaid' :
-                      firebaseSettlement.status === 'pending' ? 'Pending Confirmation' : 'Paid'
+                      !settlementRecord ? 'Unpaid' :
+                      settlementRecord.status === 'pending' ? 'Pending Confirmation' : 'Paid'
                     }
                   </Text>
                 </View>
               </View>
               
               <View style={styles.settlementActions}>
-                <Text style={styles.settlementAmount}>₹{settlement.amount.toFixed(0)}</Text>
+                <Text style={styles.settlementAmount}>₹{Number(settlement.amount || 0).toFixed(0)}</Text>
                 
                 {/* Show appropriate button based on user role and status */}
-                {!firebaseSettlement && isCurrentUserPayer && (
+                {!settlementRecord && isCurrentUserPayer && (
                   <TouchableOpacity 
                     style={styles.settleButton}
                     onPress={() => handleSettlePayment(settlement)}
@@ -1175,16 +1237,16 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                   </TouchableOpacity>
                 )}
                 
-                {firebaseSettlement?.status === 'pending' && isCurrentUserPayer && (
+                {settlementRecord?.status === 'pending' && isCurrentUserPayer && (
                   <View style={styles.pendingButton}>
                     <Text style={styles.pendingButtonText}>Pending</Text>
                   </View>
                 )}
                 
-                {firebaseSettlement?.status === 'pending' && isCurrentUserReceiver && (
+                {settlementRecord?.status === 'pending' && isCurrentUserReceiver && (
                   <TouchableOpacity 
                     style={styles.confirmButton}
-                    onPress={() => handleConfirmPayment(firebaseSettlement)}
+                    onPress={() => handleConfirmPayment(settlementRecord)}
                     disabled={settlementLoading}
                   >
                     <Text style={styles.confirmButtonText}>
@@ -1193,7 +1255,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                   </TouchableOpacity>
                 )}
                 
-                {firebaseSettlement?.status === 'paid' && (
+                {settlementRecord?.status === 'paid' && (
                   <View style={styles.paidButton}>
                     <Ionicons name="checkmark-circle" size={scale(16)} color={colors.success} />
                     <Text style={styles.paidButtonText}>Paid</Text>
@@ -1201,14 +1263,14 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                 )}
                 
                 {/* Show unpaid status for non-current users */}
-                {!isCurrentUserPayer && !isCurrentUserReceiver && !firebaseSettlement && (
+                {!isCurrentUserPayer && !isCurrentUserReceiver && !settlementRecord && (
                   <View style={styles.unpaidButton}>
                     <Text style={styles.unpaidButtonText}>Unpaid</Text>
                   </View>
                 )}
                 
                 {/* Fallback for edge cases */}
-                {!isCurrentUserPayer && !isCurrentUserReceiver && firebaseSettlement && (
+                {!isCurrentUserPayer && !isCurrentUserReceiver && settlementRecord && (
                   <Text style={styles.noActionText}>-</Text>
                 )}
               </View>
@@ -1242,7 +1304,7 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
                 </View>
                 
                 <View style={styles.settlementActions}>
-                  <Text style={styles.settlementAmount}>₹{settlement.amount.toFixed(0)}</Text>
+                  <Text style={styles.settlementAmount}>₹{Number(settlement.amount || 0).toFixed(0)}</Text>
                   <View style={styles.paidButton}>
                     <Ionicons name="checkmark-circle" size={scale(16)} color={colors.success} />
                     <Text style={styles.paidButtonText}>Paid</Text>
@@ -1402,6 +1464,12 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
           <Text style={styles.summaryTitle}>Group Summary</Text>
           {loading ? (
             <ActivityIndicator size="small" color={colors.primaryButton} />
+          ) : !expenses || expenses.length === 0 ? (
+            // State 1: No expenses yet
+            <View>
+              <Text style={styles.summaryText}>No expenses added yet in {currentGroup?.name}</Text>
+              <Text style={styles.summarySubtext}>Tap the + button to add your first expense</Text>
+            </View>
           ) : balances[currentUserId || ''] ? (
             (() => {
               const userBalance = balances[currentUserId || ''];
@@ -1410,29 +1478,38 @@ export const GroupDetailScreen: React.FC<Props> = ({route, navigation}) => {
               const youOwe = settlementsList.filter((s: any) => s.fromUserId === currentUserId);
               const owedToYou = settlementsList.filter((s: any) => s.toUserId === currentUserId);
 
+              // Check if everyone is settled (no pending settlements)
+              const hasAnyPendingSettlements = settlementsList.length > 0;
+
               return (
                 <View>
-                  {userBalance.net === 0 ? (
+                  {!hasAnyPendingSettlements ? (
+                    // State 3: All expenses are settled
+                    <Text style={styles.summaryText}>You are all settled up in {currentGroup?.name}! 🎉</Text>
+                  ) : userBalance.net === 0 ? (
+                    // User is settled but others might not be
                     <Text style={styles.summaryText}>You are all settled up in {currentGroup?.name}! 🎉</Text>
                   ) : userBalance.net > 0 ? (
+                    // State 2: Expenses added - user is owed money
                     <Text style={styles.summaryText}>
-                      You get back total <Text style={styles.owedAmount}>₹{userBalance.net.toFixed(0)}</Text> in {currentGroup?.name}
+                      You get back total <Text style={styles.owedAmount}>₹{Number(userBalance.net || 0).toFixed(0)}</Text> in {currentGroup?.name}
                     </Text>
                   ) : (
+                    // State 2: Expenses added - user owes money
                     <Text style={styles.summaryText}>
-                      You owe total <Text style={styles.oweAmount}>₹{Math.abs(userBalance.net).toFixed(0)}</Text> in {currentGroup?.name}
+                      You owe total <Text style={styles.oweAmount}>₹{Math.abs(Number(userBalance.net || 0)).toFixed(0)}</Text> in {currentGroup?.name}
                     </Text>
                   )}
 
                   {owedToYou.length > 0 && owedToYou.map((s: any) => (
                     <Text key={s.id} style={styles.summaryText}>
-                      {s.from.replace(' (You)', '')} owes you <Text style={styles.owedAmount}>₹{s.amount.toFixed(0)}</Text>
+                      {s.from.replace(' (You)', '')} owes you <Text style={styles.owedAmount}>₹{Number(s.amount || 0).toFixed(0)}</Text>
                     </Text>
                   ))}
 
                   {youOwe.length > 0 && youOwe.map((s: any) => (
                     <Text key={s.id} style={styles.summaryText}>
-                      You owe {s.to.replace(' (You)', '')} <Text style={styles.oweAmount}>₹{s.amount.toFixed(0)}</Text>
+                      You owe {s.to.replace(' (You)', '')} <Text style={styles.oweAmount}>₹{Number(s.amount || 0).toFixed(0)}</Text>
                     </Text>
                   ))}
                 </View>
@@ -1668,6 +1745,7 @@ const createStyles = (
     },
     summaryTitle: {fontSize: fonts.subtitle, fontWeight: '600', color: colors.primaryText, marginBottom: scale(8)},
     summaryText: {fontSize: fonts.caption, color: colors.secondaryText, marginBottom: scale(4), lineHeight: fonts.caption * 1.5},
+    summarySubtext: {fontSize: fonts.xs, color: colors.secondaryText, marginTop: scale(4), fontStyle: 'italic'},
     oweAmount: {color: colors.error ?? '#EF4444', fontWeight: '600'},
     owedAmount: {color: colors.success ?? '#10B981', fontWeight: '600'},
     tabContainer: {

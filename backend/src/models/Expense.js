@@ -1,4 +1,4 @@
-const { query, transaction } = require('../config/database');
+import { query, transaction  } from '../config/database.js';
 
 class Expense {
   /**
@@ -34,22 +34,34 @@ class Expense {
   }
 
   /**
-   * Find expenses by group ID
+   * Find expenses by group ID with participants
    */
   static async findByGroupId(groupId, limit = 50, offset = 0) {
-    const result = await query(
-      `SELECT e.*, u.name as paid_by_name, u.profile_image_base64 as paid_by_image,
-              COUNT(ep.id) as participant_count
+    const expensesResult = await query(
+      `SELECT e.*, u.name as paid_by_name, u.profile_image_base64 as paid_by_image
        FROM expenses e
        LEFT JOIN users u ON e.paid_by_id = u.id
-       LEFT JOIN expense_participants ep ON e.id = ep.expense_id
        WHERE e.group_id = $1 AND e.deleted_at IS NULL
-       GROUP BY e.id, u.name, u.profile_image_base64
        ORDER BY e.expense_date DESC, e.created_at DESC
        LIMIT $2 OFFSET $3`,
       [groupId, limit, offset]
     );
-    return result.rows;
+
+    // Get participants for each expense
+    const expenses = expensesResult.rows;
+    for (const expense of expenses) {
+      const participantsResult = await query(
+        `SELECT ep.*, u.profile_image_base64
+         FROM expense_participants ep
+         LEFT JOIN users u ON ep.user_id = u.id
+         WHERE ep.expense_id = $1
+         ORDER BY ep.amount DESC`,
+        [expense.id]
+      );
+      expense.participants = participantsResult.rows;
+    }
+
+    return expenses;
   }
 
   /**
@@ -157,4 +169,4 @@ class Expense {
   }
 }
 
-module.exports = Expense;
+export default Expense;

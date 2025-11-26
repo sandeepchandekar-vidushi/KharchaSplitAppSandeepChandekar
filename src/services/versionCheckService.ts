@@ -26,8 +26,8 @@ class VersionCheckService {
   private readonly DOC_ID = 'version';
 
   // Current app version - should match build.gradle versionCode and versionName
-  private readonly CURRENT_VERSION_CODE = 2;
-  private readonly CURRENT_VERSION_NAME = '1.0.1';
+  private readonly CURRENT_VERSION_CODE = 5;
+  private readonly CURRENT_VERSION_NAME = '1.2.1';
 
   /**
    * Check if app update is available

@@ -1,4 +1,4 @@
-const { query } = require('../config/database');
+import { query  } from '../config/database.js';
 
 /**
  * Activity Model
@@ -186,4 +186,4 @@ class Activity {
   }
 }
 
-module.exports = Activity;
+export default Activity;

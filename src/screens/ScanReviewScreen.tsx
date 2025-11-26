@@ -24,7 +24,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { OCRResult, LineItem } from '../services/api/ocrApi';
 import { personalExpenseApi } from '../services/api/personalExpenseApi';
 import { activityApi } from '../services/api/activityApi';
-import { firebaseService, PersonalExpense } from '../services/firebaseService';
+// import { firebaseService, PersonalExpense } from '../services/firebaseService'; // MIGRATED to PostgreSQL
+import { groupApi } from '../services/api/groupApi';
 import { formatFileSize, validateReceiptImage } from '../utils/imageUtils';
 
 interface ScanReviewScreenProps {
@@ -159,10 +160,14 @@ export const ScanReviewScreen: React.FC<ScanReviewScreenProps> = ({ route, navig
     if (!user?.id) return;
     setLoadingGroups(true);
     try {
-      const groups = await firebaseService.getUserGroups(user.id);
-      setUserGroups(groups.filter((g: any) => g.isActive !== false));
+      // Use PostgreSQL API to get groups
+      const response = await groupApi.getUserGroups(user.id, 1, 100);
+      if (response.success) {
+        setUserGroups(response.data.filter((g: any) => !g.isArchived));
+      }
     } catch (error) {
-      console.error('Error loading groups:', error);
+      console.error('[ScanReview] Error loading groups:', error);
+      setUserGroups([]); // Set empty array on error
     } finally {
       setLoadingGroups(false);
     }
@@ -252,27 +257,8 @@ export const ScanReviewScreen: React.FC<ScanReviewScreenProps> = ({ route, navig
           }
         }
       } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
-
-        // Fallback to Firebase
-        const expense: Omit<PersonalExpense, 'id'> = {
-          userId: user!.id,
-          description: expenseDescription,
-          amount: totalAmount,
-          category: {
-            ...selectedCategory,
-            name: categoryName,
-          },
-          ...(imageBase64?.startsWith('data:') && { receiptBase64: imageBase64 }),
-          date: expenseDate.toISOString(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          isActive: true,
-          ...(finalNotes.trim() && { notes: finalNotes.trim() }),
-        };
-
-        await firebaseService.createPersonalExpense(expense);
-        console.log('Scanned expense created successfully in Firebase');
+        console.error('PostgreSQL backend error:', backendError.message);
+        throw backendError; // Re-throw to be caught by outer catch
       }
 
       Alert.alert('Success', 'Expense saved to Personal Expenses!', [
@@ -327,18 +313,21 @@ export const ScanReviewScreen: React.FC<ScanReviewScreenProps> = ({ route, navig
       ? (otherCategoryName || 'Other')
       : selectedCategory?.name || 'Expense';
 
-    // Navigate to add expense screen with the selected group and pre-filled data
-    navigation.navigate('AddExpense', {
-      groupId: group.id,
-      groupName: group.name,
-      prefillData: {
-        description: categoryName,
-        amount: parseFloat(amount),
-        currency: selectedCurrency.code,
-        category: categoryName,
-        date: expenseDate.toISOString(),
-        notes: notes.trim() || undefined,
-        receiptBase64: imageBase64?.startsWith('data:') ? imageBase64 : undefined,
+    // Navigate to Home tab's AddExpense screen with the selected group and pre-filled data
+    // AddExpense screen expects 'group' object, not separate groupId/groupName
+    navigation.navigate('Home', {
+      screen: 'AddExpense',
+      params: {
+        group: group,
+        prefillData: {
+          description: categoryName,
+          amount: parseFloat(amount),
+          currency: selectedCurrency.code,
+          category: categoryName,
+          date: expenseDate.toISOString(),
+          notes: notes.trim() || undefined,
+          receiptBase64: imageBase64?.startsWith('data:') ? imageBase64 : undefined,
+        },
       },
     });
   };
@@ -846,11 +835,13 @@ const createStyles = (
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: scale(16),
-    paddingVertical: scale(12),
+    paddingHorizontal: scale(20),
+    paddingVertical: scale(16),
     backgroundColor: colors.cardBackground,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.secondaryText + '20',
   },
-  headerTitle: { fontSize: fonts.header, fontWeight: '600', color: colors.primaryText },
+  headerTitle: { fontSize: scale(24), fontWeight: '700', color: colors.primaryText },
   scrollView: { padding: scale(16) },
   confidenceCard: {
     backgroundColor: colors.cardBackground,

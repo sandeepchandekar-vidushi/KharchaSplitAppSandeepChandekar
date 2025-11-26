@@ -105,6 +105,17 @@ export interface UpdatePersonalExpenseData {
   expenseDate?: string;
 }
 
+export interface PersonalExpenseSummary {
+  totalExpenses: number;
+  totalAmount: number;
+  currency: string;
+  monthlyExpenses: {
+    month: string;
+    amount: number;
+    count: number;
+  }[];
+}
+
 // API Service
 export const personalExpenseApi = {
   /**
@@ -139,6 +150,23 @@ export const personalExpenseApi = {
   }> {
     try {
       const response = await apiClient.get(`/personal-expenses/${expenseId}`);
+      return response.data;
+    } catch (error: any) {
+      throw error;
+    }
+  },
+
+  /**
+   * Get personal expenses summary for a user
+   */
+  async getPersonalExpensesSummary(userId: string): Promise<{
+    success: boolean;
+    data: PersonalExpenseSummary;
+  }> {
+    try {
+      const response = await apiClient.get('/personal-expenses/summary', {
+        params: { userId },
+      });
       return response.data;
     } catch (error: any) {
       throw error;

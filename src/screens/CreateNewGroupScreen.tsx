@@ -112,9 +112,9 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
     const initAndClearCache = async () => {
       await contactsCacheService.init();
       console.log('[CreateGroup] Cache stats before clear:', contactsCacheService.getStats());
-      // Clear cache to force fresh Firebase lookup for accurate registration status
+      // Clear cache to force fresh backend lookup for accurate registration status
       await contactsCacheService.clear();
-      console.log('[CreateGroup] Cache cleared - forcing fresh Firebase lookup');
+      console.log('[CreateGroup] Cache cleared - forcing fresh backend lookup');
     };
 
     if (!permissionState.initialized) {
@@ -401,7 +401,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
                      'Unknown',
       }));
 
-      // Process contacts and get Firebase data simultaneously
+      // Process contacts and get backend data simultaneously
       await processContactsWithRegistration(mappedContacts);
 
       setContactsLoading(false);
@@ -417,9 +417,9 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
     try {
       setRefreshing(true);
 
-      // Clear cache to force fresh Firebase lookup
+      // Clear cache to force fresh backend lookup
       await contactsCacheService.clear();
-      console.log('[CreateGroup] Cache cleared for refresh - forcing fresh Firebase lookup');
+      console.log('[CreateGroup] Cache cleared for refresh - forcing fresh backend lookup');
 
       // Reload contacts
       await loadContacts();
@@ -447,12 +447,12 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
       // Check with backend
       const response = await userApi.checkRegisteredUsers([formattedPhone]);
 
-      if (response.success && response.data.registered.length > 0) {
+      if (response.success && response.data?.registered?.length > 0) {
         const registeredUser = response.data.registered[0];
 
         // Check if user is already in contacts list
         const existingContact = filteredContacts.find(c => {
-          const contactPhone = normalizePhoneNumber(c.phoneNumbers[0].number);
+          const contactPhone = normalizePhoneNumber(c.phoneNumbers?.[0]?.number || '');
           return contactPhone === phoneNumber;
         });
 
@@ -471,7 +471,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
         }
 
         // Create a contact object from the registered user
-        const nameParts = registeredUser.name.split(' ');
+        const nameParts = (registeredUser?.name || '').split(' ');
         const searchedContact: FilteredContact = {
           recordID: `phone-search-${registeredUser.userId}`,
           displayName: registeredUser.name,
@@ -536,7 +536,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
         if (contact.phoneNumbers?.length > 0 && !processedContactIds.has(contact.recordID)) {
           processedContactIds.add(contact.recordID);
 
-          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
+          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
 
           if (primaryPhone.length === 10) {
             // Check cache first
@@ -552,7 +552,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
                 });
               }
             } else {
-              // Need to fetch from Firebase
+              // Need to fetch from backend
               allContacts.push({
                 ...contact,
                 isRegistered: false,
@@ -566,29 +566,13 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
 
       console.log('[CreateGroup] Cached:', allContacts.filter(c => c.isRegistered).length, 'Uncached:', uncachedPhones.length);
 
-      // Fetch only uncached contacts from Firebase
+      // Fetch only uncached contacts from backend API
       if (uncachedPhones.length > 0) {
-        console.log('[CreateGroup] Fetching', uncachedPhones.length, 'uncached from Firebase');
+        console.log('[CreateGroup] Fetching', uncachedPhones.length, 'uncached from backend API');
 
-        let registeredUsers = await firebaseService.getUsersByPhoneNumbers(uncachedPhones);
-        console.log('[CreateGroup] Found', registeredUsers.length, 'registered users with +91 format');
-
-        // COMMENTED OUT: Phone format fallbacks - Backend should standardize phone format
-        // // If no results, try without +91 (just 10 digits) - like AddMemberScreen does
-        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-        //   console.log('[CreateGroup] Trying 10-digit format without +91...');
-        //   const phonesWithout91 = uncachedPhones.map(p => p.replace('+91', ''));
-        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWithout91);
-        //   console.log('[CreateGroup] Found', registeredUsers.length, 'registered users with 10-digit format');
-        // }
-
-        // // If still no results, try with 91 prefix (no +)
-        // if (registeredUsers.length === 0 && uncachedPhones.length > 0) {
-        //   console.log('[CreateGroup] Trying 91XXXXXXXXXX format (no +)...');
-        //   const phonesWith91NoPlus = uncachedPhones.map(p => p.replace('+', ''));
-        //   registeredUsers = await firebaseService.getUsersByPhoneNumbers(phonesWith91NoPlus);
-        //   console.log('[CreateGroup] Found', registeredUsers.length, 'registered users with 91XXXXXXXXXX format');
-        // }
+        const response = await userApi.checkRegisteredUsers(uncachedPhones);
+        const registeredUsers = response?.data?.registered || [];
+        console.log('[CreateGroup] Found', registeredUsers.length, 'registered users from backend');
 
         const registeredPhones = new Set<string>();
         const userProfileMap: { [key: string]: any } = {};
@@ -596,8 +580,15 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
         // Build cache entries
         const cacheEntries: Array<{ phoneNumber: string; isRegistered: boolean; userProfile?: any }> = [];
 
-        registeredUsers.forEach(userProfile => {
-          const normalizedPhone = normalizePhoneNumber(userProfile.phoneNumber);
+        registeredUsers.forEach(registeredUser => {
+          const normalizedPhone = normalizePhoneNumber(registeredUser.phoneNumber);
+          const userProfile = {
+            id: registeredUser.userId,
+            name: registeredUser.name,
+            phoneNumber: registeredUser.phoneNumber,
+            email: registeredUser.email,
+            profileImage: registeredUser.profileImage,
+          };
           registeredPhones.add(normalizedPhone);
           userProfileMap[normalizedPhone] = userProfile;
           cacheEntries.push({
@@ -621,20 +612,20 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
         // Update cache in bulk
         await contactsCacheService.setMultiple(cacheEntries);
 
-        // Update contacts with Firebase results
+        // Update contacts with backend results
         allContacts.forEach(contact => {
-          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
-          if (registeredPhones.has(primaryPhone)) {
+          const primaryPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
+          if (primaryPhone && registeredPhones.has(primaryPhone)) {
             contact.isRegistered = true;
             contact.userProfile = userProfileMap[primaryPhone];
           }
         });
       }
 
-      // Filter out current user - check both userProfile (from Firebase) and cached data
+      // Filter out current user - check both userProfile (from backend) and cached data
       const currentUserPhone = user?.phoneNumber ? normalizePhoneNumber(user.phoneNumber) : null;
       const finalContacts = allContacts.filter(contact => {
-        const primaryPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
+        const primaryPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
 
         // Check if this is the current user's phone number
         if (currentUserPhone && primaryPhone === currentUserPhone) {
@@ -726,7 +717,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
         },
       });
 
-      if (inviteResponse.success && inviteResponse.data.invites.length > 0) {
+      if (inviteResponse.success && inviteResponse.data?.invites?.length > 0) {
         const invite = inviteResponse.data.invites[0];
 
         // Use the invite message from backend or create default
@@ -800,11 +791,11 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
       const memberPhoneNumbers: string[] = [];
       selectedMembers.forEach(contact => {
         if (contact.userProfile) {
-          // Use the phone number from Firebase user profile for accuracy
+          // Use the phone number from backend user profile for accuracy
           memberPhoneNumbers.push(contact.userProfile.phoneNumber);
         } else if (contact.phoneNumbers && contact.phoneNumbers.length > 0) {
           // Fallback to normalized phone number from contact
-          const normalizedPhone = normalizePhoneNumber(contact.phoneNumbers[0].number);
+          const normalizedPhone = normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '');
           if (normalizedPhone.length >= 10) {
             memberPhoneNumbers.push(normalizedPhone);
           }
@@ -828,11 +819,11 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
           name: contact.userProfile?.name || contact.displayName || contact.givenName || 'Unknown',
           phoneNumber: contact.userProfile?.phoneNumber ||
                        (contact.phoneNumbers && contact.phoneNumbers.length > 0
-                         ? normalizePhoneNumber(contact.phoneNumbers[0].number)
+                         ? normalizePhoneNumber(contact.phoneNumbers?.[0]?.number || '')
                          : undefined),
           email: contact.userProfile?.email ||
                  (contact.emailAddresses && contact.emailAddresses.length > 0
-                   ? contact.emailAddresses[0].email
+                   ? contact.emailAddresses?.[0]?.email
                    : undefined),
         }));
 
@@ -849,19 +840,23 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
           console.log('Group created successfully in PostgreSQL:', newGroup.id);
         }
       } catch (backendError: any) {
-        console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+        console.error('PostgreSQL backend error:', backendError.message);
+        throw new Error('Failed to create group in backend. Please try again.');
 
-        // Fallback to Firebase
-        const createGroupData: CreateGroup = {
-          name: groupName,
-          description: groupDescription,
-          coverImageBase64,
-          memberPhoneNumbers,
-          currency: groupData.currency,
-        };
-
-        newGroup = await firebaseService.createGroup(createGroupData, user.id);
-        console.log('Group created successfully in Firebase:', newGroup.id);
+        // COMMENTED OUT: Firebase fallback - No longer using Firebase
+        // console.log('PostgreSQL backend error, falling back to Firebase:', backendError.message);
+        //
+        // // Fallback to Firebase
+        // const createGroupData: CreateGroup = {
+        //   name: groupName,
+        //   description: groupDescription,
+        //   coverImageBase64,
+        //   memberPhoneNumbers,
+        //   currency: groupData.currency,
+        // };
+        //
+        // newGroup = await firebaseService.createGroup(createGroupData, user.id);
+        // console.log('Group created successfully in Firebase:', newGroup.id);
       }
 
       // Clear base64 image from memory after successful upload
@@ -872,7 +867,7 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
 
       Alert.alert(
         'Success',
-        `Group "${newGroup.name}" created successfully with ${newGroup.members.length} member(s)!`,
+        `Group "${newGroup.name}" created successfully with ${newGroup.members?.length || selectedMembers.length} member(s)!`,
         [
           {
             text: 'OK',
@@ -1201,9 +1196,9 @@ export const CreateNewGroupScreen: React.FC<CreateNewGroupScreenProps> = ({ onCl
                       <Text style={styles.contactName}>
                         {displayName}
                       </Text>
-                      {contact.phoneNumbers && contact.phoneNumbers[0] && (
+                      {contact.phoneNumbers && contact.phoneNumbers?.[0] && (
                         <Text style={styles.contactPhone}>
-                          {formatPhoneForDisplay(contact.phoneNumbers[0].number)}
+                          {formatPhoneForDisplay(contact.phoneNumbers?.[0]?.number || '')}
                         </Text>
                       )}
                       {contact.isRegistered && (

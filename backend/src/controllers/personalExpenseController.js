@@ -1,4 +1,4 @@
-const PersonalExpense = require('../models/PersonalExpense');
+import PersonalExpense from '../models/PersonalExpense.js';
 
 /**
  * Get personal expenses for a user
@@ -196,7 +196,7 @@ const deletePersonalExpense = async (req, res, next) => {
   }
 };
 
-module.exports = {
+export default {
   getPersonalExpenses,
   getPersonalExpense,
   createPersonalExpense,
