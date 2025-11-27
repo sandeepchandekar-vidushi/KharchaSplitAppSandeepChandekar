@@ -3,8 +3,8 @@
  * Handles sending push notifications via Firebase Cloud Messaging (FCM)
  */
 
-const admin = require('firebase-admin');
-const { query } = require('../config/database');
+import admin from 'firebase-admin';
+import { query } from '../config/database.js';
 
 // Initialize Firebase Admin SDK (if not already initialized)
 let firebaseApp;
@@ -422,4 +422,4 @@ class NotificationService {
   }
 }
 
-module.exports = { NotificationService, NOTIFICATION_TYPES };
+export { NotificationService, NOTIFICATION_TYPES };
